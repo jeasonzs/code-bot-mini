@@ -1,8 +1,9 @@
 /**
  * @file    usb_desc.c
- * @brief   USB 描述符 - 复合设备 (Vendor + HID Keyboard + CDC ACM)
+ * @brief   USB 描述符 - 复合设备 (Vendor + HID Keyboard)
  *
- * 3 接口, 6 端点, 1 配置
+ * 2 接口, 3 端点, 1 配置
+ * 注: CDC ACM 完整实现延后到 v0.18 (见 usb_endp.c:5 注释). v0.17 只跑 Vendor + HID.
  */
 
 #include "usb_desc.h"
@@ -33,15 +34,14 @@ const uint8_t MyDevDescr[18] = {
 /* ============================================================== */
 /* 配置描述符 + 接口 + 端点 (WCH 驱动期望 MyCfgDescr)                */
 /* ============================================================== */
-/* 总长 = 9 (cfg) + 9 (Vendor iface) + 7 (Vendor EP) + 9 (HID iface) + 9 (HID desc) + 7 (HID EP)
- *       + 8 (IAD) + 9 (CDC Comm iface) + 5 (Header) + 5 (Call) + 4 (ACM) + 5 (Union) + 7 (Notify EP)
- *       + 9 (CDC Data iface) + 7 (Data EP OUT) + 7 (Data EP IN)
- *     = 9 + 9 + 7 + 9 + 9 + 7 + 8 + 9 + 5 + 5 + 4 + 5 + 7 + 9 + 7 + 7 = 114 字节
+/* 总长 = 9 (cfg) + 9 (Vendor iface) + 7 (EP1 OUT) + 7 (EP2 IN)
+ *       + 9 (HID iface) + 9 (HID desc) + 7 (EP3 IN)
+ *     = 9 + 9 + 7 + 7 + 9 + 9 + 7 = 57 = 0x39 字节
  */
 const uint8_t MyCfgDescr[] = {
     /* Configuration Descriptor */
-    0x09, USB_DESC_TYPE_CONFIGURATION, 0x72, 0x00,   /* wTotalLength = 114 */
-    0x03, 0x01, 0x00, 0x80, 0x32,                  /* 3 interfaces, bus-powered, 100mA */
+    0x09, USB_DESC_TYPE_CONFIGURATION, 0x39, 0x00,   /* wTotalLength = 57 */
+    0x02, 0x01, 0x00, 0x80, 0x32,                  /* 2 interfaces, bus-powered, 100mA */
 
     /* ============================================ */
     /* Interface 0: Vendor (Bulk I/O) */
@@ -72,47 +72,10 @@ const uint8_t MyCfgDescr[] = {
     0x07, USB_DESC_TYPE_ENDPOINT, 0x83, 0x03,        /* EP3 IN, interrupt */
     USB_EP3_SIZE, 0x00, 0x01,                       /* 8B, interval=1ms (polling) */
 
-    /* ============================================ */
-    /* Interface 2/3: CDC ACM (printf over USB) */
-    /* ============================================ */
-    /* IAD Descriptor (Interface Association for CDC) */
-    0x08, USB_DESC_TYPE_IAD, 0x02, 0x02,             /* iFirstInterface=2, iCount=2 */
-    0x02, 0x02, 0x01, 0x00,                        /* CDC class, ACM subclass, ACM protocol */
-
-    /* Interface 2: CDC Communication (Comm) */
-    0x09, USB_DESC_TYPE_INTERFACE, 0x02, 0x00, 0x01, /* alt 0, 1 endpoint */
-    0x02, 0x02, 0x01, 0x00,                        /* CDC Comm class */
-
-    /* CDC Header Functional Descriptor */
-    0x05, USB_DESC_TYPE_CS_INTERFACE, 0x00,
-    0x10, 0x01,                                     /* bcdCDC 1.10 */
-
-    /* CDC Call Management Functional Descriptor */
-    0x05, USB_DESC_TYPE_CS_INTERFACE, 0x01, 0x00,     /* capabilities */
-    0x01,                                            /* Data Interface = 1 (interface 3) */
-
-    /* CDC ACM Functional Descriptor */
-    0x04, USB_DESC_TYPE_CS_INTERFACE, 0x02, 0x02,
-
-    /* CDC Union Functional Descriptor */
-    0x05, USB_DESC_TYPE_CS_INTERFACE, 0x06, 0x00,     /* Master interface = 2 */
-    0x03,                                            /* Slave interface 0 = 3 (data) */
-
-    /* EP6 IN: CDC Notification (DTR/DSR) */
-    0x07, USB_DESC_TYPE_ENDPOINT, 0x86, 0x03,        /* EP6 IN, interrupt */
-    USB_EP6_SIZE, 0x00, 0x01,                       /* 8B, 1ms polling */
-
-    /* Interface 3: CDC Data */
-    0x09, USB_DESC_TYPE_INTERFACE, 0x03, 0x00, 0x02, /* alt 0, 2 endpoints */
-    0x0A, 0x00, 0x00, 0x00,                        /* CDC Data class */
-
-    /* EP4 OUT: CDC Bulk OUT (host → device serial data) */
-    0x07, USB_DESC_TYPE_ENDPOINT, 0x04, 0x02,        /* EP4 OUT, bulk */
-    USB_EP4_SIZE, 0x00, 0x00,
-
-    /* EP5 IN: CDC Bulk IN (device → host serial data, printf) */
-    0x07, USB_DESC_TYPE_ENDPOINT, 0x85, 0x02,        /* EP5 IN, bulk */
-    USB_EP5_SIZE, 0x00, 0x00,
+    /* CDC ACM (v0.18 再加回来):
+     *   当前硬件只使能了 EP0/EP1/EP2, EP3 复用 HID 中断
+     *   见 ch32x035_usbfs_device.c USBFS_Device_Endp_Init()
+     */
 };
 
 /* ============================================================== */

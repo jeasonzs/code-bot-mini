@@ -4,22 +4,31 @@
  *
  * WCH USB 驱动使用 memcpy, 项目代码用 printf, 但我们用 -nostdlib 禁用了 newlib.
  * memcpy: 字节级 (USB 数据量小, 不需 SIMD 优化)
- * printf: 最小化实现 (%% %c %s %d %x), 输出到 USART1 (与 WCH USART_Printf_Init 一致)
+ * printf: 最小化实现 (%% %c %s %d %x), 输出到 DEBUG_USART (默认 USART3 on PC18)
+ *
+ * 注: TSSOP-20 封装没有 PB10/PB11, USART1 默认 TX 不可用.
+ *     pinout.h 中 DEBUG_USART 宏根据 DEBUG_IFACE 选择 USART3 (SERIAL 模式).
  */
 
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdint.h>
-#include "ch32x035.h"  /* USART1, USART_SendData */
+#include "ch32x035.h"
+#include "pinout.h"     /* DEBUG_USART, DEBUG_USART_GPIO_PORT ... */
 
-/* 底层: 发送一个字符 (假设 USART1 已由 USART_Printf_Init 配置好) */
+/* 底层: 发送一个字符到 DEBUG_USART (SERIAL 模式下为 USART3 on PC18) */
 static void putc(char c) {
+#if (DEBUG_IFACE == DEBUG_IFACE_SERIAL)
     if (c == '\n') {
-        USART_SendData(USART1, '\r');
-        while (USART_GetFlagStatus(USART1, USART_FLAG_TC) == RESET);
+        USART_SendData(DEBUG_USART, '\r');
+        while (USART_GetFlagStatus(DEBUG_USART, USART_FLAG_TC) == RESET);
     }
-    USART_SendData(USART1, (uint8_t)c);
-    while (USART_GetFlagStatus(USART1, USART_FLAG_TC) == RESET);
+    USART_SendData(DEBUG_USART, (uint8_t)c);
+    while (USART_GetFlagStatus(DEBUG_USART, USART_FLAG_TC) == RESET);
+#else
+    /* DEBUG_IFACE == SDI: printf 输出丢弃, 用 WCH-LinkE SDI 调试 */
+    (void)c;
+#endif
 }
 
 /* 数字转字符串 (无除法版, 节省 code size) */

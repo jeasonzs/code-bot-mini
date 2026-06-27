@@ -10,7 +10,7 @@
  *   - DMA1_Channel3_IRQn: SPI TX DMA 完成 (TODO)
  *   - I2C1_EV_IRQn: I2C 事件 (TODO)
  *   - I2C1_ER_IRQn: I2C 错误 (TODO)
- *   - EXTI0_IRQn: Touch INT (PB0)
+ *   - EXTI15_8_IRQn: Touch INT (PA9, 共享向量含 EXTI8..EXTI15)
  *   - SysTick_IRQn: 1ms 滴答 (WCH core_riscv.c 提供)
  */
 
@@ -22,10 +22,10 @@
  * (USBFS_IRQHandler 在 ch32x035_usbfs_device.c 中已定义) */
 
 /**
- * @brief Touch INT 中断 (PB0 EXTI0, 共享 EXTI7_0 向量)
+ * @brief Touch INT 中断 (PA9 EXTI9, 共享 EXTI15_8 向量含 EXTI8..EXTI15)
  * @note  下降沿触发, 通知触摸模块读坐标
  */
-void EXTI7_0_IRQHandler(void) {
+void EXTI15_8_IRQHandler(void) {
     if (EXTI_GetITStatus(TP_INT_EXTI_LINE) != RESET) {
         EXTI_ClearITPendingBit(TP_INT_EXTI_LINE);
         Touch_EXTI_Handler();
