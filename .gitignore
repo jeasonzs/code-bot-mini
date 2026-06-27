@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+*.o
+*.elf
+*.hex
+*.bin
+*.map
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Toolchain paths
+.cmake/
