@@ -90,10 +90,6 @@ static void LCD_WriteDataMulti(const uint8_t *data, uint32_t len) {
 /* ===== GC9307 初始化序列 ===== */
 /* 参考: 社区 GC9307 init 序列, 与 ST7789V3 兼容大部分命令 */
 
-static const uint8_t GC9307_INIT_CMD[] = {
-    /* command, N params, params... */
-};
-
 static void LCD_RunInitSequence(void) {
     /* 硬件复位 */
     LCD_RST_LOW();

@@ -21,7 +21,11 @@
 #include "protocol/proto.h"
 #include "usb/usb_desc.h"
 #include "usb/usb_endp.h"
+#include "usb/hid_kbd.h"
 #include "util/ringbuf.h"
+
+/* 延时函数声明 (本文件定义, 其他模块使用) */
+void delay_ms(uint32_t ms);
 
 /* ============================================================== */
 /* 全局状态                                                       */
@@ -40,13 +44,8 @@ void delay_ms(uint32_t ms) {
     while ((g_ticks_ms - start) < ms);
 }
 
-/* EXTI0 中断 (触摸 INT) - 见 ch32x035_it.c 的弱定义覆盖 */
-void EXTI0_IRQHandler(void) {
-    if (EXTI_GetITStatus(EXTI_Line0) != RESET) {
-        EXTI_ClearITPendingBit(EXTI_Line0);
-        Touch_EXTI_Handler();  /* 通知触摸模块读坐标 */
-    }
-}
+/* EXTI0 中断 (触摸 INT) 见 ch32x035_it.c, 这里是 WCH 启动文件 weak 默认实现的覆盖 */
+/* (在 ch32x035_it.c 中提供) */
 
 /* ============================================================== */
 /* 初始化                                                         */
@@ -79,13 +78,6 @@ static void GPIO_Init_All(void) {
     /* 调试: LED 用 PA0 (可选) - 暂未使用 */
 }
 
-static void USB_Init_All(void) {
-    /* USB device 库初始化 (WCH USBFS driver) */
-    USBFS_RCC_Init();
-    USBFS_Device_Init();
-    /* 描述符 + 端点回调在 usb_desc.c / usb_endp.c 中实现 */
-}
-
 int main(void) {
     /* 1. 系统基础初始化 (在 system_ch32x035.c 中, 默认 48MHz HSI) */
     SystemInit();
@@ -115,9 +107,9 @@ int main(void) {
     /* 8. LCD 背光 PWM (TIM2_CH3) */
     LCD_BL_SetBrightness(80);  /* 80% */
 
-    /* 9. USB 复合设备初始化 (Vendor + HID Keyboard + CDC) */
+    /* 9. USB 复合设备初始化 (Vendor + HID Keyboard, CDC v0.18+) */
     printf("[CodeBot] Init USB composite...\n");
-    USB_Init_All();
+    USB_Device_Init_App();
 
     /* 10. 协议层初始化 */
     Protocol_Init();
@@ -138,9 +130,6 @@ int main(void) {
 
         /* 发送 HID Keyboard 击键队列 */
         HID_Kbd_SendPending();
-
-        /* 排空 CDC 串口输出 (printf) */
-        CDC_Service();
 
         /* 1Hz PING */
         if (g_ticks_ms - last_ping >= 1000) {

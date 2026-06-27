@@ -22,10 +22,10 @@
  * (USBFS_IRQHandler 在 ch32x035_usbfs_device.c 中已定义) */
 
 /**
- * @brief Touch INT 中断 (PB0 EXTI0)
+ * @brief Touch INT 中断 (PB0 EXTI0, 共享 EXTI7_0 向量)
  * @note  下降沿触发, 通知触摸模块读坐标
  */
-void EXTI0_IRQHandler(void) {
+void EXTI7_0_IRQHandler(void) {
     if (EXTI_GetITStatus(TP_INT_EXTI_LINE) != RESET) {
         EXTI_ClearITPendingBit(TP_INT_EXTI_LINE);
         Touch_EXTI_Handler();

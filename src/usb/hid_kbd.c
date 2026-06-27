@@ -7,6 +7,10 @@
 #include "util/ringbuf.h"
 #include "ch32x035_conf.h"
 
+/* WCH USB 驱动期望的 HID SetReport 缓冲 (ch32x035_usbfs_device.c 引用) */
+__attribute__((aligned(4))) uint8_t HID_Report_Buffer[64];
+volatile uint8_t HID_Set_Report_Flag = 0;
+
 /* 入队的 report 在这里: 单字节环形缓冲, 存放 8B report 单元 */
 static uint8_t  s_q_storage[HID_QUEUE_DEPTH * HID_REPORT_SIZE];
 static ringbuf_t s_q_rb;

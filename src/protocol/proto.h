@@ -79,6 +79,9 @@ void Protocol_Init(void);
 /* 主循环调用: 处理 USB OUT 收到的命令 */
 void Protocol_Poll(void);
 
+/* 喂入一个收到的字节 (USB EP1 OUT 回调调用) */
+void Protocol_RxByte(uint8_t byte);
+
 /* 主动发送 PONG (1Hz) */
 void Protocol_SendPong(void);
 

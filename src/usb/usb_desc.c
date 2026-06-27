@@ -8,9 +8,9 @@
 #include "usb_desc.h"
 
 /* ============================================================== */
-/* 设备描述符                                                     */
+/* 设备描述符 (用 WCH 驱动期望的名字 MyDevDescr)                    */
 /* ============================================================== */
-const uint8_t USBD_DeviceDesc[18] = {
+const uint8_t MyDevDescr[18] = {
     0x12,                           /* bLength */
     USB_DESC_TYPE_DEVICE,           /* bDescriptorType */
     0x10, 0x01,                     /* bcdUSB 1.10 */
@@ -31,14 +31,14 @@ const uint8_t USBD_DeviceDesc[18] = {
 };
 
 /* ============================================================== */
-/* 配置描述符 + 接口 + 端点                                        */
+/* 配置描述符 + 接口 + 端点 (WCH 驱动期望 MyCfgDescr)                */
 /* ============================================================== */
 /* 总长 = 9 (cfg) + 9 (Vendor iface) + 7 (Vendor EP) + 9 (HID iface) + 9 (HID desc) + 7 (HID EP)
  *       + 8 (IAD) + 9 (CDC Comm iface) + 5 (Header) + 5 (Call) + 4 (ACM) + 5 (Union) + 7 (Notify EP)
  *       + 9 (CDC Data iface) + 7 (Data EP OUT) + 7 (Data EP IN)
  *     = 9 + 9 + 7 + 9 + 9 + 7 + 8 + 9 + 5 + 5 + 4 + 5 + 7 + 9 + 7 + 7 = 114 字节
  */
-const uint8_t USBD_ConfigDesc[] = {
+const uint8_t MyCfgDescr[] = {
     /* Configuration Descriptor */
     0x09, USB_DESC_TYPE_CONFIGURATION, 0x72, 0x00,   /* wTotalLength = 114 */
     0x03, 0x01, 0x00, 0x80, 0x32,                  /* 3 interfaces, bus-powered, 100mA */
@@ -116,9 +116,9 @@ const uint8_t USBD_ConfigDesc[] = {
 };
 
 /* ============================================================== */
-/* HID Report 描述符 (Keyboard)                                    */
+/* HID Report 描述符 (Keyboard, WCH 驱动期望 MyHIDReportDesc)       */
 /* ============================================================== */
-const uint8_t USBD_HIDReportDesc[] = {
+const uint8_t MyHIDReportDesc[] = {
     /* 标准键盘 report (8 bytes: modifier + reserved + 6 keycodes) */
     0x05, 0x01,                     /* Usage Page (Generic Desktop) */
     0x09, 0x06,                     /* Usage (Keyboard) */
@@ -159,25 +159,25 @@ const uint8_t USBD_HIDReportDesc[] = {
 /* ============================================================== */
 
 /* Language ID: English-US (0x0409) */
-const uint8_t USBD_StringLangID[] = {
+const uint8_t MyLangDescr[] = {
     0x04, 0x03, 0x09, 0x04
 };
 
 /* Manufacturer: "Code Bot" */
-const uint8_t USBD_StringManu[] = {
+const uint8_t MyManuInfo[] = {
     16, 0x03,        /* 16 bytes, STRING type */
     'C', 0, 'o', 0, 'd', 0, 'e', 0, ' ', 0, 'B', 0, 'o', 0, 't', 0
 };
 
 /* Product: "Code Bot Display" */
-const uint8_t USBD_StringProd[] = {
+const uint8_t MyProdInfo[] = {
     34, 0x03,
     'C', 0, 'o', 0, 'd', 0, 'e', 0, ' ', 0, 'B', 0, 'o', 0, 't', 0,
     ' ', 0, 'D', 0, 'i', 0, 's', 0, 'p', 0, 'l', 0, 'a', 0, 'y', 0
 };
 
 /* Serial: "0001" (可改为唯一序列号) */
-const uint8_t USBD_StringSerial[] = {
+const uint8_t MySerNumInfo[] = {
     10, 0x03,
     '0', 0, '0', 0, '0', 0, '1', 0
 };

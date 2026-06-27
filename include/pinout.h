@@ -37,6 +37,10 @@
 
 #include "ch32x035.h"
 
+/* ===== 全局工具 (在 main.c 中定义) ===== */
+extern volatile uint32_t g_ticks_ms;
+void delay_ms(uint32_t ms);
+
 /* ===== GPIO 端口基地址 (CH32X035 头文件已定义 GPIOA/GPIOB/GPIOC) ===== */
 
 /* ===== GPIO 时钟使能 ===== */
@@ -65,10 +69,10 @@
 
 /* ===== 端口访问便捷宏 ===== */
 #define LCD_SPI_PORT          GPIOA
-#define LCD_SPI_CLK           RCC_APB2Periph_GPIOA
+#define LCD_GPIO_CLK          RCC_APB2Periph_GPIOA
 #define LCD_CTRL_PORT         GPIOA
 #define TP_I2C_PORT           GPIOA
-#define TP_I2C_CLK            RCC_APB2Periph_GPIOA
+#define TP_GPIO_CLK           RCC_APB2Periph_GPIOA
 #define TP_INT_PORT           GPIOB
 #define TP_INT_CLK            RCC_APB2Periph_GPIOB
 #define TP_RST_PORT           GPIOB
@@ -101,8 +105,8 @@
 
 /* ===== EXTI 中断号 ===== */
 #define TP_INT_EXTI_LINE     EXTI_Line0
-#define TP_INT_EXTI_IRQn     EXTI0_IRQn
-#define TP_INT_EXTI_HANDLER  EXTI0_IRQHandler
+#define TP_INT_EXTI_IRQn     EXTI7_0_IRQn
+#define TP_INT_EXTI_HANDLER  EXTI7_0_IRQHandler
 
 /* ===== 触摸 I2C 地址 ===== */
 #define TP_I2C_ADDR          0x15   /* CST816D 7-bit 地址 */

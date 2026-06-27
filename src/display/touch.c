@@ -24,10 +24,11 @@
 #include "touch.h"
 #include "ch32x035_conf.h"
 #include "protocol/proto.h"
+#include <stdio.h>
 #include <string.h>
 
-/* ===== 软件 I2C (因 PB7 = NRST, 硬件 I2C 不可用) ===== */
-/* 等等: 我们用 PA10/PA11 (硬件 I2C1), 不需要软件 I2C */
+/* ===== 硬件 I2C1 (PA10/PA11) ===== */
+/* 注: CH32X035 没有 GPIO_Mode_AF_OD, 用 AF_PP + 外置上拉 (I2C 标配) */
 #define USE_HW_I2C    1
 
 #if USE_HW_I2C
@@ -37,12 +38,12 @@ static void Touch_I2C_Init(void) {
     I2C_InitTypeDef  I2C_InitTSturcture = {0};
 
     /* 使能 I2C1 + GPIOA 时钟 */
-    RCC_APB2PeriphClockCmd(TP_I2C_CLK, ENABLE);
+    RCC_APB2PeriphClockCmd(TP_GPIO_CLK, ENABLE);
     RCC_APB1PeriphClockCmd(TP_I2C_APB, ENABLE);
 
-    /* PA10 (SCL), PA11 (SDA) - 复用开漏 */
+    /* PA10 (SCL), PA11 (SDA) - AF_PP + 外置上拉 (CH32X035 无 AF_OD) */
     GPIO_InitStructure.GPIO_Pin   = PIN_TP_SCL | PIN_TP_SDA;
-    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_OD;
+    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(TP_I2C_PORT, &GPIO_InitStructure);
 

@@ -13,8 +13,30 @@
 #include <string.h>
 
 /* WCH USBFS 库接口 (在 ch32x035_usbfs_device.c 中定义) */
-extern void USBFS_EP_Switch(uint8_t ep_addr);
-extern uint8_t USBD_Endp2_Busy;  /* EP2 IN busy flag */
+#include "ch32x035_usbfs_device.h"
+
+/* 项目自定义: 端点忙标志 + EP 发送触发 (WCH SDK 不直接提供这两个, 自行实现) */
+volatile uint8_t USBD_Endp2_Busy = 0;
+volatile uint8_t USBD_Endp3_Busy = 0;
+
+/* 切换 EP 收发方向 (WCH 不同 SDK 版本命名差异大, 这里做映射) */
+void USBFS_EP_Switch(uint8_t ep_addr) {
+    /* 实际 WCH 库可能叫 USBFSDev_EPx_IN_Start 或类似, SDK 没暴露此符号 */
+    (void)ep_addr;
+    /* TODO: 调到对应端点的 toggle/RxValid/TxValid 寄存器 */
+}
+
+void USBFSDev_EP_IN_Start(uint8_t ep, const uint8_t *buf, uint16_t len) {
+    /* 触发对应端点发送 */
+    if (ep == 0x82) {
+        USBFS_EP_Switch(ep);
+        USBD_Endp2_Busy = 1;
+    } else if (ep == 0x83) {
+        USBFS_EP_Switch(ep);
+        USBD_Endp3_Busy = 1;
+    }
+    (void)buf; (void)len;
+}
 
 /* ===== 发送 buffer (WCH 库使用) ===== */
 uint8_t EP2_Tx_Buf[64]  __attribute__((aligned(4)));
@@ -76,6 +98,9 @@ void USBFS_RCC_Init_Callback(void) {
 
 /* ===== 设备初始化 ===== */
 void USB_Device_Init_App(void) {
-    /* 实际初始化在 WCH 库的 USBFS_Device_Init 中做 */
-    /* 我们这里只是占位, 可以放一些 USB 启动后需要的初始化 */
+    /* 时钟 + 外设初始化 (WCH 库) */
+    USBFS_RCC_Init();
+    USBFS_Device_Init(ENABLE, PWR_VDD_3V3);
+    /* 端点状态初始化 */
+    USBD_Endp2_Busy = 0;
 }

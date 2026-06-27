@@ -58,14 +58,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # =============================================================================
 # Compile Flags (从 EVT .cproject 提取)
 # =============================================================================
-set(CMAKE_C_FLAGS
-    "-march=rv32imac_zicsr -mabi=ilp32 -msave-restore
-     -Os -ffunction-sections -fdata-sections
-     -fno-common -fsigned-char
-     -Wall -Wunused -Wuninitialized
-     -ffreestanding -nostdlib -nostartfiles
-     -fno-builtin"
-)
+set(CMAKE_C_FLAGS "-march=rv32imac_zicsr -mabi=ilp32 -msave-restore -Os -ffunction-sections -fdata-sections -fno-common -fsigned-char -Wall -Wunused -Wuninitialized -ffreestanding -nostdlib -nostartfiles -fno-builtin")
 
 # Debug build 优化降级
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
@@ -73,11 +66,13 @@ set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
 # =============================================================================
 # Linker Configuration (使用 WCH 官方 Link.ld)
 # =============================================================================
-set(CMAKE_EXE_LINKER_FLAGS
-    "-T${WCH_EVT_SRC}/Ld/Link.ld
-     -Wl,--gc-sections -Wl,--print-memory-usage
-     -nostartfiles"
-)
+# -nostartfiles: 不链接 crt0 (我们有 startup_ch32x035.S)
+# -nostdlib:    不链接 newlib (libc 我们自己用 libc_stubs.c 提供)
+# libgcc.a 通过 target_link_libraries 在末尾追加, 这样静态库成员扫描能找到引用
+set(CMAKE_EXE_LINKER_FLAGS "-T${WCH_EVT_SRC}/Ld/Link.ld -Wl,--gc-sections -Wl,--print-memory-usage -nostartfiles -nostdlib")
+
+# libgcc.a 绝对路径 (在 -nostdlib 下不被默认查找, 显式指定)
+set(WCH_LIBGCC "${WCH_TOOLCHAIN_BIN}/../lib/gcc/riscv32-wch-elf/15.2.0/libgcc.a")
 
 # =============================================================================
 # Include Directories
@@ -101,12 +96,14 @@ file(GLOB OUR_SOURCES
     "${CMAKE_SOURCE_DIR}/src/util/*.c"
     "${CMAKE_SOURCE_DIR}/src/display/*.c"
     "${CMAKE_SOURCE_DIR}/src/protocol/*.c"
+    "${CMAKE_SOURCE_DIR}/src/app/*.c"
 )
 
 # --- 我们自己的 USB 描述符 + 端点 (必须复制到我们仓库, 因为改写自 WCH) ---
 list(APPEND OUR_SOURCES
     "${CMAKE_SOURCE_DIR}/src/usb/usb_desc.c"
     "${CMAKE_SOURCE_DIR}/src/usb/usb_endp.c"
+    "${CMAKE_SOURCE_DIR}/src/usb/hid_kbd.c"
 )
 
 # --- ch32x035_it.c (WCH 模板的弱中断处理, 我们自己覆盖) ---
@@ -127,7 +124,6 @@ set(WCH_PERIPH_SOURCES
     ${WCH_EVT_SRC}/Peripheral/src/ch32x035_pwr.c
     ${WCH_EVT_SRC}/Peripheral/src/ch32x035_usart.c
     ${WCH_EVT_SRC}/Peripheral/src/ch32x035_tim.c
-    ${WCH_EVT_SRC}/Peripheral/src/system_ch32x035.c
     ${WCH_EVT_SRC}/Core/core_riscv.c
     ${WCH_EVT_SRC}/Debug/debug.c
     ${WCH_EVT_USB}/ch32x035_usbfs_device.c
@@ -146,6 +142,9 @@ add_executable(firmware.elf
     ${WCH_PERIPH_SOURCES}
     ${WCH_ASM_SOURCES}
 )
+
+# libgcc 提供 __riscv_save/restore 等编译器运行时 helper (在末尾追加, 让 archive 扫描能找到引用)
+target_link_libraries(firmware.elf "${WCH_LIBGCC}")
 
 # =============================================================================
 # Post-Build: 生成 .hex / .bin
