@@ -31,15 +31,36 @@ void delay_ms(uint32_t ms);
 /* ============================================================== */
 /* 全局状态                                                       */
 /* ============================================================== */
-volatile uint32_t g_ticks_ms = 0;  /* 1ms SysTick */
+/* g_ticks_ms 由 TIM3 update 中断每 1ms 累加一次 (见 ch32x035_it.c).
+ * SysTick 留给 debug.c 的 Delay_Ms / Delay_Us 用, 不要在这里占用. */
+volatile uint32_t g_ticks_ms = 0;
 
-/* SysTick 中断 (WCH core_riscv.c 默认提供) */
-void SysTick_Handler(void) {
-    g_ticks_ms++;
-    /* SysTick_Config 已在 system_ch32x035.c 中设置 1ms 周期 */
+/* TIM3 1ms 滴答初始化
+ *   48MHz / (47+1) = 1MHz 计数时钟, 周期 999 → 1kHz update 中断 = 1ms 滴答
+ *   与 LCD 背光 TIM2_PWMInit 完全相同的分频/周期参数, 改成 TIM3. */
+static void Tick_TIM3_Init(void) {
+    TIM_TimeBaseInitTypeDef tb = {0};
+    NVIC_InitTypeDef nv = {0};
+
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+
+    tb.TIM_Prescaler   = 47;
+    tb.TIM_Period      = 999;
+    tb.TIM_CounterMode = TIM_CounterMode_Up;
+    TIM_TimeBaseInit(TIM3, &tb);
+
+    TIM_ITConfig(TIM3, TIM_IT_Update, ENABLE);
+    TIM_Cmd(TIM3, ENABLE);
+
+    NVIC_Init(&nv);  /* 防止 -Wmaybe-uninitialized */
+    nv.NVIC_IRQChannel                   = TIM3_IRQn;
+    nv.NVIC_IRQChannelPreemptionPriority = 0;
+    nv.NVIC_IRQChannelSubPriority        = 1;
+    nv.NVIC_IRQChannelCmd                = ENABLE;
+    NVIC_Init(&nv);
 }
 
-/* 延时函数 (ms) - 简单循环 */
+/* 延时函数 (ms) - 简单循环, 依赖 g_ticks_ms */
 void delay_ms(uint32_t ms) {
     uint32_t start = g_ticks_ms;
     while ((g_ticks_ms - start) < ms);
@@ -108,8 +129,9 @@ int main(void) {
     /* 2. NVIC 配置 */
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_1);
 
-    /* 3. SysTick 1ms 中断 (由 SystemCoreClockUpdate + SysTick_Config) */
-    /* WCH core_riscv.c 默认注册 SysTick_Handler, 不需手动开 */
+    /* 3. 1ms 滴答定时器: 用 TIM3 (TIM2 被 LCD 背光占, TIM1 太高级).
+     *    SysTick 留给 debug.c 的 Delay_Ms / Delay_Us 自由使用. */
+    Tick_TIM3_Init();
 
     /* 4. 调试串口 (USART3 on PC18/PC19, 由 DEBUG_IFACE 宏决定) 初始化 */
     Debug_USART_Init();
@@ -144,8 +166,6 @@ int main(void) {
     /* 主循环                                                       */
     /* ============================================================ */
     uint32_t last_ping = 0;
-    uint32_t last_dbg  = 0;
-    uint32_t loop_cnt  = 0;
 
     while (1) {
         /* 处理 USB 事件 (Vendor OUT 命令解析) */
@@ -157,21 +177,11 @@ int main(void) {
         /* 发送 HID Keyboard 击键队列 */
         HID_Kbd_SendPending();
 
-        /* DEBUG: 每 500ms 打一次 tick, 看 SysTick 有没有跑 */
-        if (loop_cnt - last_dbg >= 10000) {
-            last_dbg = loop_cnt;
-            printf("[DBG] loop=%d tick=%d last_ping=%d\n",
-                   (unsigned long)loop_cnt,
-                   (unsigned long)g_ticks_ms,
-                   (unsigned long)last_ping);
-        }
-        loop_cnt++;
-
         /* 1Hz PING */
         if (g_ticks_ms - last_ping >= 1000) {
             last_ping = g_ticks_ms;
             Protocol_SendPong();
-            printf("[DBG] PING fired, tick=%lu\n", (unsigned long)g_ticks_ms);
+            printf("[DBG] PING fired, tick=%d\n", g_ticks_ms);
         }
 
         /* 短暂睡眠, 让中断处理 */
