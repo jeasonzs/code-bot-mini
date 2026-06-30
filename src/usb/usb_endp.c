@@ -2,8 +2,18 @@
  * @file    usb_endp.c
  * @brief   USB 端点处理 - Vendor Bulk + HID Keyboard
  *
- * 注: CDC ACM 完整实现复杂 (需写整个 class driver), 计划 v0.18 单独实现
- *      v0.17 先把 Vendor + HID 跑通
+ * 端点分配:
+ *   - EP1 OUT (bulk 64B):  Vendor 图像/命令 (主机 → 设备)
+ *   - EP2 IN  (bulk 64B):  Vendor 触摸事件/ACK (设备 → 主机)
+ *   - EP3 IN  (intr 8B):   HID Keyboard report
+ *
+ * CDC 接口 v0.17 不实现 (注释也删了, 别再误以为有 CDC)
+ *
+ * v0.17 → v0.18 重写:
+ *   - 删除原 USBFS_EP_Switch / USBFSDev_EP_IN_Start stub
+ *   - 改用 vendored WCH 库的 USBFS_Endp_DataUp() 真实触发 IN 传输
+ *   - EP1 OUT 经 WCH 库弱符号 EP1_OUT_Callback 拿到 buf + len
+ *   - busy 状态由库 USBFS_Endp_Busy[] 统一管, 这里不再有 USBD_Endp*_Busy
  */
 
 #include "usb_endp.h"
@@ -12,95 +22,76 @@
 #include "hid_kbd.h"
 #include <string.h>
 
-/* WCH USBFS 库接口 (在 ch32x035_usbfs_device.c 中定义) */
+/* WCH USBFS 库 (vendored copy at src/usb/ch32x035_usbfs_device.{c,h}) */
 #include "ch32x035_usbfs_device.h"
 
-/* 项目自定义: 端点忙标志 + EP 发送触发 (WCH SDK 不直接提供这两个, 自行实现) */
-volatile uint8_t USBD_Endp2_Busy = 0;
-volatile uint8_t USBD_Endp3_Busy = 0;
+/* ============================================================== */
+/* 发送 buffer (USBD_Endp*_Busy 旧标志已删, 库 USBFS_Endp_Busy[] 统一管) */
+/* ============================================================== */
+uint8_t EP2_Tx_Buf[64]  __attribute__((aligned(4)));   /* Vendor bulk IN, 64B */
+uint8_t EP3_Tx_Buf[8]   __attribute__((aligned(4)));   /* HID interrupt IN, 8B  */
 
-/* 切换 EP 收发方向 (WCH 不同 SDK 版本命名差异大, 这里做映射) */
-void USBFS_EP_Switch(uint8_t ep_addr) {
-    /* 实际 WCH 库可能叫 USBFSDev_EPx_IN_Start 或类似, SDK 没暴露此符号 */
-    (void)ep_addr;
-    /* TODO: 调到对应端点的 toggle/RxValid/TxValid 寄存器 */
-}
-
-void USBFSDev_EP_IN_Start(uint8_t ep, const uint8_t *buf, uint16_t len) {
-    /* 触发对应端点发送 */
-    if (ep == 0x82) {
-        USBFS_EP_Switch(ep);
-        USBD_Endp2_Busy = 1;
-    } else if (ep == 0x83) {
-        USBFS_EP_Switch(ep);
-        USBD_Endp3_Busy = 1;
-    }
-    (void)buf; (void)len;
-}
-
-/* ===== 发送 buffer (WCH 库使用) ===== */
-uint8_t EP2_Tx_Buf[64]  __attribute__((aligned(4)));
-uint8_t EP3_Tx_Buf[8]   __attribute__((aligned(4)));
-
-/* ===== 接收 buffer (Vendor Bulk OUT EP1) ===== */
+/* EP1 Rx 旧 buffer: 库 ISR 已把数据放好, callback 从参数 buf 读, 不用这个. 留个符号兼容旧 include. */
 uint8_t EP1_Rx_Buf[64]  __attribute__((aligned(4)));
 
-/* ===== Vendor Bulk OUT 回调 (EP1) ===== */
-/* WCH 库在收到 EP1 数据后调用本函数 */
-void EP1_OUT_Callback(uint16_t len) {
-    /* 将收到的数据喂给协议层 */
+/* ============================================================== */
+/* Vendor Bulk OUT (EP1) 接收回调                                  */
+/* 由 vendored WCH 库在 EP1 OUT 收完一包后调用 (弱符号, 默认 NULL) */
+/* ============================================================== */
+void EP1_OUT_Callback(uint16_t len, const uint8_t *buf) {
+    if (len == 0 || len > 64) return;
     for (uint16_t i = 0; i < len; i++) {
-        Protocol_RxByte(EP1_Rx_Buf[i]);
+        Protocol_RxByte(buf[i]);
     }
-
-    /* 准备接收下一包 (Vendor Bulk OUT) */
-    USBFS_EP_Switch(0x01);  /* EP1 OUT */
-    /* SetRxStatus 实际由 WCH 库宏完成, 这里只喂协议 */
 }
 
-/* ===== Vendor Bulk IN 回调 (EP2) ===== */
+/* ============================================================== */
+/* Vendor Bulk IN (EP2) 发送完成回调 (库 EP2_IN 分支已清 busy)     */
+/* ============================================================== */
 void EP2_IN_Callback(void) {
-    USBD_Endp2_Busy = 0;  /* 标记 EP2 空闲 */
+    /* 库已自动清 USBFS_Endp_Busy[DEF_UEP2] 并翻 T_TOG.
+     * 协议层下一帧可以发了. 这里不需做事, 留个钩子. */
 }
 
-/* ===== HID Keyboard IN 回调 (EP3) ===== */
+/* ============================================================== */
+/* HID Keyboard EP3 发送完成回调                                  */
+/* ============================================================== */
 void EP3_IN_Callback(void) {
-    /* HID 发送完成, 不需要特殊处理 */
-    /* HID_Kbd_SendPending 会在下一个 20ms 节流周期检查 */
+    /* 同 EP2_IN_Callback, 库自动处理. 钩子留给 HID 上层做发送队列. */
 }
 
-/* ===== 发送 Vendor 帧 (EP2 IN) ===== */
+/* ============================================================== */
+/* Vendor 帧发送 (EP2 IN)                                        */
+/* ============================================================== */
 int Vendor_SendFrame(const uint8_t *data, uint16_t len) {
-    if (len > 64) return -1;
-    if (USBD_Endp2_Busy) return -1;  /* 上次还没发完 */
-    memcpy(EP2_Tx_Buf, data, len);
-    USBD_Endp2_Busy = 1;
-    /* 触发 EP2 IN 发送 */
-    extern void USBFSDev_EP_IN_Start(uint8_t ep, const uint8_t *buf, uint16_t len);
-    USBFSDev_EP_IN_Start(0x82, EP2_Tx_Buf, len);
-    return 0;
+    if (len == 0 || len > 64) return -1;
+    if (data == NULL) return -1;
+    if (USBFS_Endp_Busy[DEF_UEP2]) return -1;        /* 上一帧还没发完 */
+    return USBFS_Endp_DataUp(DEF_UEP2, data, len);   /* 0 成功, 1 失败 */
 }
 
-/* ===== 发送 HID Keyboard Report (EP3 IN) ===== */
+/* ============================================================== */
+/* HID 报告发送 (EP3 IN, 8B)                                     */
+/* ============================================================== */
 int HID_SendReport(const uint8_t *report) {
-    memcpy(EP3_Tx_Buf, report, 8);
-    /* 触发 EP3 IN 发送 (interrupt, 1ms polling) */
-    extern void USBFSDev_EP_IN_Start(uint8_t ep, const uint8_t *buf, uint16_t len);
-    USBFSDev_EP_IN_Start(0x83, EP3_Tx_Buf, 8);
-    return 0;
+    if (report == NULL) return -1;
+    if (USBFS_Endp_Busy[DEF_UEP3]) return -1;
+    return USBFS_Endp_DataUp(DEF_UEP3, report, 8);
 }
 
-/* ===== USB device reset 回调 ===== */
+/* ============================================================== */
+/* USB device reset 回调 (vendored 库在 USB 总线复位时调用)        */
+/* ============================================================== */
 void USBFS_RCC_Init_Callback(void) {
-    /* 复位时重置端点状态 */
-    USBD_Endp2_Busy = 0;
+    /* 库自己会重新调 USBFS_Device_Endp_Init 复位所有端点.
+     * 这里只做应用层状态清理. */
 }
 
-/* ===== 设备初始化 ===== */
+/* ============================================================== */
+/* 设备初始化 (main.c USB_Device_Init_App 调用)                  */
+/* ============================================================== */
 void USB_Device_Init_App(void) {
-    /* 时钟 + 外设初始化 (WCH 库) */
     USBFS_RCC_Init();
     USBFS_Device_Init(ENABLE, PWR_VDD_3V3);
-    /* 端点状态初始化 */
-    USBD_Endp2_Busy = 0;
+    /* 库初始化时 USBFS_Device_Endp_Init 已被调用, EP2/EP3 TX 已使能 */
 }

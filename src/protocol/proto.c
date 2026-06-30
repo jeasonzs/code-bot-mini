@@ -10,6 +10,7 @@
 #include "usb/hid_kbd.h"
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 /* 接收 buffer: USB EP1 OUT (Vendor Bulk) -> 协议解析 */
 #define RX_BUF_SIZE   512

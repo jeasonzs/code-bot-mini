@@ -152,7 +152,7 @@ int main(void) {
     /* 8. LCD 背光 PWM (TIM2_CH3) */
     // LCD_BL_SetBrightness(80);  /* 80% */
 
-    /* 9. USB 复合设备初始化 (Vendor + HID Keyboard, CDC v0.18+) */
+    /* 9. USB 复合设备初始化 (Vendor + HID Keyboard) */
     printf("[CodeBot] Init USB composite...\n");
     USB_Device_Init_App();
 

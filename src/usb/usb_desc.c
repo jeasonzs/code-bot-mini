@@ -128,7 +128,7 @@ const uint8_t MyLangDescr[] = {
 
 /* Manufacturer: "Code Bot" */
 const uint8_t MyManuInfo[] = {
-    16, 0x03,        /* 16 bytes, STRING type */
+    18, 0x03,        /* 18 bytes, STRING type (bLength 必须是字符串总字节数, 不是字符数) */
     'C', 0, 'o', 0, 'd', 0, 'e', 0, ' ', 0, 'B', 0, 'o', 0, 't', 0
 };
 

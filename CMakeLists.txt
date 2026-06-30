@@ -26,7 +26,6 @@ endif()
 
 # 校验 SDK 路径
 set(WCH_EVT_SRC  "${WCH_SDK_ROOT}/EVT/EXAM/SRC")
-set(WCH_EVT_USB  "${WCH_SDK_ROOT}/EVT/EXAM/USB/USBFS/DEVICE/CompatibilityHID/User")
 set(WCH_TOOLCHAIN_BIN "${WCH_SDK_ROOT}/Toolchain/RISC-V Embedded GCC15/bin")
 set(WCH_OPENOCD_BIN   "${WCH_SDK_ROOT}/OpenOCD/OpenOCD/bin/openocd")
 set(WCH_OPENOCD_CFG   "${WCH_SDK_ROOT}/OpenOCD/OpenOCD/bin/wch-riscv.cfg")
@@ -83,7 +82,6 @@ include_directories(
     ${WCH_EVT_SRC}/Peripheral/inc
     ${WCH_EVT_SRC}/Core
     ${WCH_EVT_SRC}/Debug
-    ${WCH_EVT_USB}
 )
 
 # =============================================================================
@@ -99,11 +97,15 @@ file(GLOB OUR_SOURCES
     "${CMAKE_SOURCE_DIR}/src/app/*.c"
 )
 
-# --- 我们自己的 USB 描述符 + 端点 (必须复制到我们仓库, 因为改写自 WCH) ---
+# --- 我们自己的 USB 描述符 + 端点 (vendor 副本 + 端点处理) ---
+# 库副本在 src/usb/ch32x035_usbfs_device.{c,h}, 我们 patch 过加了 EP3 + DataUp
+# usbd_compatibility_hid.{c,h} 是从 WCH 剥过来的薄壳, 只留 HID 符号
 list(APPEND OUR_SOURCES
     "${CMAKE_SOURCE_DIR}/src/usb/usb_desc.c"
     "${CMAKE_SOURCE_DIR}/src/usb/usb_endp.c"
     "${CMAKE_SOURCE_DIR}/src/usb/hid_kbd.c"
+    "${CMAKE_SOURCE_DIR}/src/usb/ch32x035_usbfs_device.c"
+    "${CMAKE_SOURCE_DIR}/src/usb/usbd_compatibility_hid.c"
 )
 
 # --- ch32x035_it.c (WCH 模板的弱中断处理, 我们自己覆盖) ---
@@ -126,7 +128,7 @@ set(WCH_PERIPH_SOURCES
     ${WCH_EVT_SRC}/Peripheral/src/ch32x035_tim.c
     ${WCH_EVT_SRC}/Core/core_riscv.c
     ${WCH_EVT_SRC}/Debug/debug.c
-    ${WCH_EVT_USB}/ch32x035_usbfs_device.c
+    # ch32x035_usbfs_device.c 已 vendor 到 src/usb/ (上面 OUR_SOURCES 里), 不再 link WCH_EVT_USB 副本
 )
 
 # --- WCH SDK 启动文件 ---
