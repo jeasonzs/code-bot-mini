@@ -18,7 +18,12 @@ static uint32_t s_last_send_tick = 0;  /* 1ms tick */
 
 /* USB 发送端: 需外部实现 - 在 usb_endp.c 中 */
 extern uint8_t EP3_Tx_Buf[];
-extern void USBFS_EP3_SendReport(const uint8_t *report);
+extern int HID_SendReport(const uint8_t *report);
+
+void HID_Kbd_Init(void) {
+    ringbuf_init(&s_q_rb, s_q_storage, sizeof(s_q_storage));
+    s_last_send_tick = 0;
+}
 
 void HID_Kbd_EnqueueReports(const uint8_t *reports, uint8_t count, uint8_t delay_ms) {
     /* 简化: 暂不实现 delay_ms 排队, 直接 enqueue 全部 */
@@ -40,7 +45,9 @@ void HID_Kbd_SendPending(void) {
     uint8_t report[HID_REPORT_SIZE];
     if (ringbuf_read(&s_q_rb, report, HID_REPORT_SIZE) != HID_REPORT_SIZE) return;
 
-    /* TODO: 通过 EP3 IN 发送 */
-    /* USBFS_EP3_SendReport(report); */
-    (void)report;
+    /* 真的通过 EP3 IN 上报. 失败 (busy/未使能) 时把 report 放回队首, 下一轮重试. */
+    if (HID_SendReport(report) != 0) {
+        /* 推回去: tail 倒退一格, 下一轮再试 */
+        ringbuf_unread(&s_q_rb, HID_REPORT_SIZE);
+    }
 }

@@ -159,6 +159,9 @@ int main(void) {
     /* 10. 协议层初始化 */
     Protocol_Init();
 
+    /* 10b. HID 击键队列初始化 (必须在 USB 之后, 队列空) */
+    HID_Kbd_Init();
+
     printf("[CodeBot] Ready. Waiting for host...\n");
     printf("[CodeBot] g_ticks_ms @ boot = %d\n", (unsigned long)g_ticks_ms);
 
@@ -180,8 +183,9 @@ int main(void) {
         /* 1Hz PING */
         if (g_ticks_ms - last_ping >= 1000) {
             last_ping = g_ticks_ms;
+            printf("[DBG] PING-fired tick=%d last=%d\n",
+                   (int)g_ticks_ms, (int)last_ping);
             Protocol_SendPong();
-            printf("[DBG] PING fired, tick=%d\n", g_ticks_ms);
         }
 
         /* 短暂睡眠, 让中断处理 */

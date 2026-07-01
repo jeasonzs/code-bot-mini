@@ -229,6 +229,14 @@ void USBFS_IRQHandler( void )
                             USBFSD->UEP2_CTRL_H = (USBFSD->UEP2_CTRL_H & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_RES_NAK;
                             USBFSD->UEP2_CTRL_H ^= USBFS_UEP_T_TOG;
                             USBFS_Endp_Busy[ DEF_UEP2 ] = 0;
+                            /* [DBG] 打印一下 IN token 完成 (节流, 不然刷屏炸 ISR) */
+                            {
+                                static uint16_t _ep2_done = 0;
+                                _ep2_done++;
+                                if ((_ep2_done & 0x3F) == 0) {
+                                    printf("[DBG] EP2_IN done, count=%d\n", (int)_ep2_done);
+                                }
+                            }
                             break;
 
                         /* Code Bot: end-point 3 data in interrupt (HID Keyboard report) */
@@ -306,6 +314,20 @@ void USBFS_IRQHandler( void )
                                     EP1_OUT_Callback(RingBuffer_Comm.PackLen[last_ptr],
                                                      &Data_Buffer[last_ptr * DEF_USBD_FS_PACK_SIZE]);
                                 }
+                            }
+
+                            /* Code Bot: 本 fork 的 EP1_OUT_Callback 同步消费整包
+                             * (usb_endp.c 把每个字节立刻喂给 Protocol_RxByte), 所
+                             * 以本 slot 在回调返回时已经逻辑释放. 递减 RemainPack
+                             * 并在低于 restart 阈值时把 EP1 RX 重新置 ACK, 防止
+                             * 库把 EP1 OUT 永久 NAK 住. */
+                            if (RingBuffer_Comm.RemainPack > 0) {
+                                RingBuffer_Comm.RemainPack --;
+                            }
+                            if (RingBuffer_Comm.StopFlag &&
+                                RingBuffer_Comm.RemainPack < DEF_RING_BUFFER_RESTART) {
+                                USBFSD->UEP1_CTRL_H = (USBFSD->UEP1_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_ACK;
+                                RingBuffer_Comm.StopFlag = 0;
                             }
                         }
                         break;
@@ -824,8 +846,11 @@ uint8_t USBFS_Endp_DataUp(uint8_t endp, const uint8_t *pbuf, uint16_t len)
     /* WCH 特殊用法: *uep_dma 是 RAM 地址 (相对 0x20000000), +0x20000000 还原绝对地址 */
     memcpy(((uint8_t *)(*uep_dma) + 0x20000000), pbuf, len);
     *uep_tx_len = len;
-    /* 翻 T_TOG + 置 T_RES_ACK, 启动 IN 传输 */
-    *uep_ctrl = (*uep_ctrl & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_TOG | USBFS_UEP_T_RES_ACK;
+    /* 置 T_RES_ACK 启动 IN 传输.
+     * 注: 不要在这里强制 | USBFS_UEP_T_TOG — 第一次传输 host 期望 DATA0,
+     * 强制 DATA1 会导致 toggle 不匹配, host NAK, busy 永远不清.
+     * ISR 会在每次成功 IN token 后 ^ T_TOG, 状态机会自动正确翻转. */
+    *uep_ctrl = (*uep_ctrl & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_RES_ACK;
     USBFS_Endp_Busy[endp] = 1;
     return 0;
 }

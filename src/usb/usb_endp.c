@@ -50,7 +50,10 @@ void EP1_OUT_Callback(uint16_t len, const uint8_t *buf) {
 /* ============================================================== */
 void EP2_IN_Callback(void) {
     /* 库已自动清 USBFS_Endp_Busy[DEF_UEP2] 并翻 T_TOG.
-     * 协议层下一帧可以发了. 这里不需做事, 留个钩子. */
+     * 协议层下一帧可以发了. 这里不需做事, 留个钩子.
+     * 注: 本 fork 的 ISR 没接这个 weak 钩子 (只接了 EP1_OUT_Callback),
+     *     真正的 busy 清零在 vendored 库的 USBFS_UIS_TOKEN_IN 分支里.
+     *     所以这里加打印只对将来扩展有效. */
 }
 
 /* ============================================================== */
@@ -64,10 +67,21 @@ void EP3_IN_Callback(void) {
 /* Vendor 帧发送 (EP2 IN)                                        */
 /* ============================================================== */
 int Vendor_SendFrame(const uint8_t *data, uint16_t len) {
-    if (len == 0 || len > 64) return -1;
-    if (data == NULL) return -1;
-    if (USBFS_Endp_Busy[DEF_UEP2]) return -1;        /* 上一帧还没发完 */
-    return USBFS_Endp_DataUp(DEF_UEP2, data, len);   /* 0 成功, 1 失败 */
+    if (len == 0 || len > 64) {
+        printf("[DBG] VSF: len=%d out of range\n", (int)len);
+        return -1;
+    }
+    if (data == NULL) {
+        printf("[DBG] VSF: NULL data\n");
+        return -1;
+    }
+    if (USBFS_Endp_Busy[DEF_UEP2]) {
+        printf("[DBG] VSF: busy=1, skip\n");
+        return -1;                                   /* 上一帧还没发完 */
+    }
+    uint8_t rc = USBFS_Endp_DataUp(DEF_UEP2, data, len);
+    printf("[DBG] VSF: DataUp rc=%d\n", (int)rc);
+    return rc;
 }
 
 /* ============================================================== */

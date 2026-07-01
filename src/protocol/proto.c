@@ -43,6 +43,11 @@ static void proto_send_frame(uint8_t cmd, const uint8_t *payload, uint16_t len) 
     hdr.flags = 0;
     hdr.length = len;
 
+    /* [DBG] 入口检查, 判断是否被调用 */
+    extern volatile uint32_t g_ticks_ms;
+    printf("[DBG] proto_send_frame cmd=%d len=%d tick=%d\n",
+           cmd, (int)len, (int)g_ticks_ms);
+
     /* CRC over header + payload */
     uint8_t crc_buf[PROTO_HEADER_SIZE + PROTO_MAX_PAYLOAD];
     size_t hdr_size = PROTO_HEADER_SIZE - PROTO_CRC_SIZE;  /* magic..length, 6B */
@@ -50,14 +55,16 @@ static void proto_send_frame(uint8_t cmd, const uint8_t *payload, uint16_t len) 
     if (payload && len > 0) memcpy(crc_buf + hdr_size, payload, len);
     hdr.crc16 = proto_crc16(crc_buf, hdr_size + len);
 
-    /* 构造完整帧 (header + payload) */
-    uint16_t frame_len = (uint16_t)hdr_size + len;
+    /* 构造完整帧 (header + payload + CRC) */
+    uint16_t frame_len = (uint16_t)hdr_size + len + PROTO_CRC_SIZE;
     uint8_t frame[PROTO_HEADER_SIZE + PROTO_MAX_PAYLOAD];
-    memcpy(frame, &hdr, hdr_size);
-    if (payload && len > 0) memcpy(frame + hdr_size, payload, len);
+    memcpy(frame, &hdr, PROTO_HEADER_SIZE);              /* 完整 8B header, 含 CRC */
+    if (payload && len > 0) memcpy(frame + PROTO_HEADER_SIZE, payload, len);
 
     /* 发送: 通过 Vendor EP2 IN */
-    Vendor_SendFrame(frame, frame_len);
+    int snd_rc = Vendor_SendFrame(frame, frame_len);
+    printf("[DBG] Vendor_SendFrame -> %d  frame_len=%d  cmd=%d\n",
+           snd_rc, (int)frame_len, cmd);
 }
 
 /* ===== 接收帧处理 ===== */
@@ -145,7 +152,7 @@ static void process_rx_data(void) {
             continue;
         }
 
-        /* 读取 8B 头 */
+        /* 读取 8B 头 (CRC 在 header 内部偏移 6-7) */
         if (ringbuf_available(&s_rx_rb) < PROTO_HEADER_SIZE) return;
         uint8_t hdr_bytes[PROTO_HEADER_SIZE];
         ringbuf_read(&s_rx_rb, hdr_bytes, PROTO_HEADER_SIZE);
@@ -159,25 +166,23 @@ static void process_rx_data(void) {
         uint16_t payload_len = hdr.length;
         if (payload_len > PROTO_MAX_PAYLOAD) continue;
 
-        /* 等待 payload + 2B CRC */
-        if (ringbuf_available(&s_rx_rb) < payload_len + PROTO_CRC_SIZE) {
+        /* 等待 payload (CRC 已在 header 里读过了) */
+        if (ringbuf_available(&s_rx_rb) < payload_len) {
             /* 数据未到齐, 放回头部 (简化: 丢弃) */
             /* TODO: 实现可重入的流式解析 */
             continue;
         }
 
-        /* 读 payload + CRC */
+        /* 读 payload */
         ringbuf_read(&s_rx_rb, s_frame_buf, payload_len);
-        uint16_t recv_crc;
-        ringbuf_read(&s_rx_rb, (uint8_t *)&recv_crc, 2);
 
-        /* 验证 CRC (header + payload) */
+        /* 验证 CRC (header[0:6] + payload) */
         uint8_t crc_data[PROTO_HEADER_SIZE - PROTO_CRC_SIZE + PROTO_MAX_PAYLOAD];
         size_t crc_data_len = (PROTO_HEADER_SIZE - PROTO_CRC_SIZE) + payload_len;
         memcpy(crc_data, hdr_bytes, PROTO_HEADER_SIZE - PROTO_CRC_SIZE);
         memcpy(crc_data + PROTO_HEADER_SIZE - PROTO_CRC_SIZE, s_frame_buf, payload_len);
         uint16_t calc_crc = proto_crc16(crc_data, crc_data_len);
-        if (calc_crc != recv_crc) {
+        if (calc_crc != hdr.crc16) {
             /* CRC 错, 丢弃 */
             continue;
         }

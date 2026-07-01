@@ -28,6 +28,10 @@ uint16_t ringbuf_write(ringbuf_t *rb, const uint8_t *data, uint16_t len);
 /* 读取: 返回实际读取字节数 */
 uint16_t ringbuf_read(ringbuf_t *rb, uint8_t *data, uint16_t len);
 
+/* 反悔: 把 tail 往回退 len 字节 (前提是 head 还没追上原 tail).
+ * 用于 read 之后, 下游消费失败的回滚. 返回实际回退字节数. */
+uint16_t ringbuf_unread(ringbuf_t *rb, uint16_t len);
+
 /* 查看但不移除一个字节 (peek) */
 int ringbuf_peek(ringbuf_t *rb, uint8_t *byte);
 
