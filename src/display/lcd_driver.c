@@ -32,6 +32,15 @@ static void LCD_SPI_Init(void) {
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_IN_FLOATING;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
 
+    /* CS (PA4) - 软件片选, 必须配成推挽输出并默认拉高;
+     * 否则复位后 PA4 为浮空输入, GPIO_Set/ResetBits 驱动不了引脚,
+     * CS 永远无法有效拉低 -> GC9307 忽略所有 SPI 数据 -> 全黑。 */
+    GPIO_InitStructure.GPIO_Pin   = PIN_LCD_CS;
+    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_Out_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(LCD_CTRL_PORT, &GPIO_InitStructure);
+    GPIO_SetBits(LCD_CTRL_PORT, PIN_LCD_CS);
+
     /* SPI1 配置 */
     SPI_InitStructure.SPI_Direction         = SPI_Direction_2Lines_FullDuplex;
     SPI_InitStructure.SPI_Mode              = SPI_Mode_Master;
@@ -87,8 +96,7 @@ static void LCD_WriteDataMulti(const uint8_t *data, uint32_t len) {
     LCD_CS_HIGH();
 }
 
-/* ===== GC9307 初始化序列 ===== */
-/* 参考: 社区 GC9307 init 序列, 与 ST7789V3 兼容大部分命令 */
+/* ===== GC9307 初始化序列 (厂商提供) ===== */
 
 static void LCD_RunInitSequence(void) {
     /* 硬件复位 */
@@ -97,106 +105,136 @@ static void LCD_RunInitSequence(void) {
     LCD_RST_HIGH();
     delay_ms(120);
 
-    /* Sleep Out */
-    LCD_WriteCommand(0x11);
-    delay_ms(120);
+    /* 内部寄存器解锁 (Inter Register Enable 1/2) */
+    LCD_WriteCommand(0xFE);
+    LCD_WriteCommand(0xEF);
 
-    /* 显示关闭 */
-    LCD_WriteCommand(0x28);
+    /* MADCTL: 320 宽横屏需 MV=1 (行列交换), 0x48|0x20=0x68。
+     * 实测 0x48(MV=0) 会把坐标按竖屏解释, 只沿长边刷 172 像素条带。
+     * 若显示镜像/翻转, 调整 MX(0x40)/MY(0x80) 位; 红蓝反调 BGR(0x08)。 */
+    LCD_WriteCommand(0x36);
+    LCD_WriteData(0x68);
 
-    /* 像素格式: RGB565 */
+    /* 像素格式: RGB565 (16-bit/pixel) */
     LCD_WriteCommand(0x3A);
-    LCD_WriteData(0x55);  /* 16-bit/pixel */
-    delay_ms(10);
+    LCD_WriteData(0x05);
 
-    /* Porch 控制 (厂商值) */
-    LCD_WriteCommand(0xB2);
-    LCD_WriteData(0x0C);
-    LCD_WriteData(0x0C);
+    /* 内部时序 / 电荷泵配置 (厂商值) */
+    LCD_WriteCommand(0x85);
+    LCD_WriteData(0xC0);
+    LCD_WriteCommand(0x86);
+    LCD_WriteData(0x98);
+    LCD_WriteCommand(0x87);
+    LCD_WriteData(0x28);
+    LCD_WriteCommand(0x89);
+    LCD_WriteData(0x33);
+    LCD_WriteCommand(0x8B);
+    LCD_WriteData(0x84);
+    LCD_WriteCommand(0x8D);
+    LCD_WriteData(0x3B);
+    LCD_WriteCommand(0x8E);
+    LCD_WriteData(0x0F);
+    LCD_WriteCommand(0x8F);
+    LCD_WriteData(0x70);
+
+    LCD_WriteCommand(0xE8);
+    LCD_WriteData(0x13);
+    LCD_WriteData(0x17);
+
+    LCD_WriteCommand(0xEC);
+    LCD_WriteData(0x57);
+    LCD_WriteData(0x07);
+    LCD_WriteData(0xFF);
+
+    LCD_WriteCommand(0xED);
+    LCD_WriteData(0x18);
+    LCD_WriteData(0x09);
+
+    /* VCOM 已烧录到 OTP, 此处不再写入 */
+    /* LCD_WriteCommand(0xC3); LCD_WriteData(0x29); */
+    /* LCD_WriteCommand(0xC4); LCD_WriteData(0x45); */
+
+    LCD_WriteCommand(0xC9);
+    LCD_WriteData(0x10);
+
+    LCD_WriteCommand(0xFF);
+    LCD_WriteData(0x61);
+
+    LCD_WriteCommand(0x99);
+    LCD_WriteData(0x3A);
+    LCD_WriteCommand(0x9D);
+    LCD_WriteData(0x43);
+    LCD_WriteCommand(0x98);
+    LCD_WriteData(0x3E);
+    LCD_WriteCommand(0x9C);
+    LCD_WriteData(0x4B);
+
+    /* 伽马 (F0/F2 正极性, F1/F3 负极性) */
+    LCD_WriteCommand(0xF0);
+    LCD_WriteData(0x06);
+    LCD_WriteData(0x08);
+    LCD_WriteData(0x08);
+    LCD_WriteData(0x06);
+    LCD_WriteData(0x05);
+    LCD_WriteData(0x1D);
+
+    LCD_WriteCommand(0xF2);
     LCD_WriteData(0x00);
-    LCD_WriteData(0x33);
-    LCD_WriteData(0x33);
+    LCD_WriteData(0x01);
+    LCD_WriteData(0x09);
+    LCD_WriteData(0x07);
+    LCD_WriteData(0x04);
+    LCD_WriteData(0x23);
 
-    /* Gate 控制 (厂商值) */
-    LCD_WriteCommand(0xB7);
+    LCD_WriteCommand(0xF1);
+    LCD_WriteData(0x3B);
+    LCD_WriteData(0x68);
+    LCD_WriteData(0x66);
+    LCD_WriteData(0x36);
+    LCD_WriteData(0x35);
+    LCD_WriteData(0x2F);
+
+    LCD_WriteCommand(0xF3);
+    LCD_WriteData(0x37);
+    LCD_WriteData(0x6A);
+    LCD_WriteData(0x66);
+    LCD_WriteData(0x37);
+    LCD_WriteData(0x35);
     LCD_WriteData(0x35);
 
-    /* VCOM 设置 */
-    LCD_WriteCommand(0xBB);
-    LCD_WriteData(0x32);  /* VCOM=1.35V */
-
-    /* LCM 控制 */
-    LCD_WriteCommand(0xC2);
-    LCD_WriteData(0x01);
-
-    /* VDV/VRH 写入 */
-    LCD_WriteCommand(0xC3);
-    LCD_WriteData(0x15);
-
-    /* VRH 写入 */
-    LCD_WriteCommand(0xC4);
-    LCD_WriteData(0x20);
-
-    /* VDV 写入 */
-    LCD_WriteCommand(0xC5);
-    LCD_WriteData(0x00);
-
-    /* 帧率控制 (60Hz) */
-    LCD_WriteCommand(0xC6);
+    LCD_WriteCommand(0xFA);
+    LCD_WriteData(0x80);
     LCD_WriteData(0x0F);
 
-    /* 电源控制 1 */
-    LCD_WriteCommand(0xD0);
-    LCD_WriteData(0xA4);
-    LCD_WriteData(0xA1);
+    LCD_WriteCommand(0xBE);
+    LCD_WriteData(0x11);  /* source bias */
 
-    /* 电源控制 2 */
-    LCD_WriteCommand(0xD6);
-    LCD_WriteData(0xA1);
+    LCD_WriteCommand(0xCB);
+    LCD_WriteData(0x02);
 
-    /* 伽马正极性 */
-    LCD_WriteCommand(0xE0);
-    LCD_WriteData(0xF0);
-    LCD_WriteData(0x05);
-    LCD_WriteData(0x0E);
-    LCD_WriteData(0x08);
-    LCD_WriteData(0x04);
-    LCD_WriteData(0x05);
-    LCD_WriteData(0x11);
-    LCD_WriteData(0x0B);
+    LCD_WriteCommand(0xCD);
+    LCD_WriteData(0x22);
+
+    LCD_WriteCommand(0x9B);
+    LCD_WriteData(0xFF);
+
+    /* Tearing Effect line off */
+    LCD_WriteCommand(0x35);
+    LCD_WriteData(0x00);
+
+    LCD_WriteCommand(0x44);
+    LCD_WriteData(0x00);
     LCD_WriteData(0x0A);
-    LCD_WriteData(0x09);
-    LCD_WriteData(0x05);
-    LCD_WriteData(0x2A);
-    LCD_WriteData(0xF6);
-    LCD_WriteData(0x1E);
-    LCD_WriteData(0x2D);
-    LCD_WriteData(0x2D);
-    LCD_WriteData(0x05);
 
-    /* 伽马负极性 */
-    LCD_WriteCommand(0xE1);
-    LCD_WriteData(0xF0);
-    LCD_WriteData(0x05);
-    LCD_WriteData(0x0E);
-    LCD_WriteData(0x09);
-    LCD_WriteData(0x04);
-    LCD_WriteData(0x06);
-    LCD_WriteData(0x10);
-    LCD_WriteData(0x0B);
-    LCD_WriteData(0x0A);
-    LCD_WriteData(0x09);
-    LCD_WriteData(0x05);
-    LCD_WriteData(0x2A);
-    LCD_WriteData(0xF6);
-    LCD_WriteData(0x1E);
-    LCD_WriteData(0x2D);
-    LCD_WriteData(0x2D);
-    LCD_WriteData(0x05);
+    /* Sleep Out */
+    LCD_WriteCommand(0x11);
+    delay_ms(200);
 
     /* 显示开启 */
     LCD_WriteCommand(0x29);
-    delay_ms(50);
+
+    /* RAMWR: 准备写显存 */
+    LCD_WriteCommand(0x2C);
 }
 
 /* ===== 背光 PWM (TIM2_CH3 on PA2) ===== */
@@ -244,14 +282,54 @@ void LCD_Reinit(void) {
     LCD_RunInitSequence();
 }
 
+/* 设置地址窗口 (带控制器 RAM 偏移), 之后即可流式写 RAMWR */
+static void LCD_SetAddrWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    uint16_t x0 = x + LCD_X_OFFSET;
+    uint16_t x1 = x + LCD_X_OFFSET + w - 1;
+    uint16_t y0 = y + LCD_Y_OFFSET;
+    uint16_t y1 = y + LCD_Y_OFFSET + h - 1;
+
+    LCD_WriteCommand(0x2A);  /* CASET */
+    LCD_WriteData(x0 >> 8); LCD_WriteData(x0 & 0xFF);
+    LCD_WriteData(x1 >> 8); LCD_WriteData(x1 & 0xFF);
+    LCD_WriteCommand(0x2B);  /* RASET */
+    LCD_WriteData(y0 >> 8); LCD_WriteData(y0 & 0xFF);
+    LCD_WriteData(y1 >> 8); LCD_WriteData(y1 & 0xFF);
+    LCD_WriteCommand(0x2C);  /* RAMWR */
+}
+
+/* 用单色流式填充一个矩形 (不需要像素缓冲) */
+static void LCD_FillColor(uint16_t x, uint16_t y, uint16_t w, uint16_t h, lcd_color_t color) {
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
+    if (x + w > LCD_WIDTH)  w = LCD_WIDTH  - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+
+    LCD_SetAddrWindow(x, y, w, h);
+
+    uint8_t hi = color >> 8;
+    uint8_t lo = color & 0xFF;
+    LCD_CS_LOW();
+    LCD_DC_DATA();
+    for (uint32_t i = 0; i < (uint32_t)w * h; i++) {
+        SPI_SendByte(hi);
+        SPI_SendByte(lo);
+    }
+    LCD_CS_HIGH();
+}
+
 void LCD_Clear(lcd_color_t color) {
-    /* 设置全屏窗口 */
+    /* 设置全屏窗口 (带控制器 RAM 偏移) */
+    uint16_t x0 = LCD_X_OFFSET;
+    uint16_t x1 = LCD_X_OFFSET + LCD_WIDTH - 1;
+    uint16_t y0 = LCD_Y_OFFSET;
+    uint16_t y1 = LCD_Y_OFFSET + LCD_HEIGHT - 1;
+
     LCD_WriteCommand(0x2A);
-    LCD_WriteData(0); LCD_WriteData(0);
-    LCD_WriteData((LCD_WIDTH-1) >> 8); LCD_WriteData((LCD_WIDTH-1) & 0xFF);
+    LCD_WriteData(x0 >> 8); LCD_WriteData(x0 & 0xFF);
+    LCD_WriteData(x1 >> 8); LCD_WriteData(x1 & 0xFF);
     LCD_WriteCommand(0x2B);
-    LCD_WriteData(0); LCD_WriteData(0);
-    LCD_WriteData((LCD_HEIGHT-1) >> 8); LCD_WriteData((LCD_HEIGHT-1) & 0xFF);
+    LCD_WriteData(y0 >> 8); LCD_WriteData(y0 & 0xFF);
+    LCD_WriteData(y1 >> 8); LCD_WriteData(y1 & 0xFF);
     LCD_WriteCommand(0x2C);  /* RAMWR */
 
     /* 全屏填充单色 */
@@ -271,13 +349,19 @@ void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t 
     if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
     if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
 
+    /* 加控制器 RAM 偏移 */
+    uint16_t x0 = x + LCD_X_OFFSET;
+    uint16_t x1 = x + LCD_X_OFFSET + w - 1;
+    uint16_t y0 = y + LCD_Y_OFFSET;
+    uint16_t y1 = y + LCD_Y_OFFSET + h - 1;
+
     /* 设置窗口 */
     LCD_WriteCommand(0x2A);  /* CASET */
-    LCD_WriteData(x >> 8); LCD_WriteData(x & 0xFF);
-    LCD_WriteData((x + w - 1) >> 8); LCD_WriteData((x + w - 1) & 0xFF);
+    LCD_WriteData(x0 >> 8); LCD_WriteData(x0 & 0xFF);
+    LCD_WriteData(x1 >> 8); LCD_WriteData(x1 & 0xFF);
     LCD_WriteCommand(0x2B);  /* RASET */
-    LCD_WriteData(y >> 8); LCD_WriteData(y & 0xFF);
-    LCD_WriteData((y + h - 1) >> 8); LCD_WriteData((y + h - 1) & 0xFF);
+    LCD_WriteData(y0 >> 8); LCD_WriteData(y0 & 0xFF);
+    LCD_WriteData(y1 >> 8); LCD_WriteData(y1 & 0xFF);
     LCD_WriteCommand(0x2C);  /* RAMWR */
 
     LCD_WriteDataMulti(pixels, (uint32_t)w * h * 2);
@@ -288,4 +372,47 @@ void LCD_BL_SetBrightness(uint8_t pct) {
     /* CCR 范围 0-999, 0%=0, 100%=999 */
     uint16_t ccr = (uint16_t)((uint32_t)pct * 999 / 100);
     TIM_SetCompare3(LCD_BL_TIMER, ccr);
+}
+
+/* ===== 调试辅助 ===== */
+
+/* 纯色循环: 红->绿->蓝->白->黑, 每色停留 ms 毫秒。
+ * 用途: 确认全屏点亮、无花边/错位, 颜色正确(红蓝不反)。 */
+void LCD_DebugColorCycle(uint16_t ms) {
+    static const lcd_color_t seq[] = {
+        LCD_COLOR_RED, LCD_COLOR_GREEN, LCD_COLOR_BLUE,
+        LCD_COLOR_WHITE, LCD_COLOR_BLACK
+    };
+    for (uint32_t i = 0; i < sizeof(seq) / sizeof(seq[0]); i++) {
+        LCD_Clear(seq[i]);
+        delay_ms(ms);
+    }
+}
+
+/* 对齐图案: 黑底 + 1px 白色外边框 + 四角实心方块 + 居中十字。
+ * 用途: 核对 CASET/RASET 偏移是否正好贴屏边。
+ *   - 边框某侧看不到 / 被截 -> 该方向偏移偏大, 减小对应 LCD_*_OFFSET
+ *   - 边框某侧与屏边有黑缝   -> 偏移偏小, 增大对应偏移
+ *   - 四角方块缺角          -> 长/宽方向都需再微调 */
+void LCD_DebugAlignPattern(void) {
+    const uint16_t W = LCD_WIDTH, H = LCD_HEIGHT;
+    const uint16_t m = 8;  /* 角标尺寸 */
+
+    LCD_Clear(LCD_COLOR_BLACK);
+
+    /* 1px 外边框 (四条边) */
+    LCD_FillColor(0,     0,     W, 1, LCD_COLOR_WHITE);  /* 上 */
+    LCD_FillColor(0,     H - 1, W, 1, LCD_COLOR_WHITE);  /* 下 */
+    LCD_FillColor(0,     0,     1, H, LCD_COLOR_WHITE);  /* 左 */
+    LCD_FillColor(W - 1, 0,     1, H, LCD_COLOR_WHITE);  /* 右 */
+
+    /* 四角实心方块 (不同色便于区分方向) */
+    LCD_FillColor(0,     0,     m, m, LCD_COLOR_RED);    /* 左上 */
+    LCD_FillColor(W - m, 0,     m, m, LCD_COLOR_GREEN);  /* 右上 */
+    LCD_FillColor(0,     H - m, m, m, LCD_COLOR_BLUE);   /* 左下 */
+    LCD_FillColor(W - m, H - m, m, m, LCD_COLOR_WHITE);  /* 右下 */
+
+    /* 居中十字 */
+    LCD_FillColor(0,     H / 2, W, 1, LCD_COLOR_WHITE);  /* 水平 */
+    LCD_FillColor(W / 2, 0,     1, H, LCD_COLOR_WHITE);  /* 垂直 */
 }

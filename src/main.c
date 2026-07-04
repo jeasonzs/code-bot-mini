@@ -141,16 +141,15 @@ int main(void) {
     GPIO_Init_All();
 
     // /* 6. LCD 初始化 (GC9307) */
-    // printf("[CodeBot] Init LCD GC9307...\n");
-    // LCD_Init();
-    // LCD_Clear(0x0000);  /* 全屏黑 */
+    printf("[CodeBot] Init LCD GC9307...\n");
+    LCD_Init();
+    LCD_BL_SetBrightness(50);  /* 先开背光 */
 
-    // /* 7. 触摸初始化 (CST816D) */
-    // printf("[CodeBot] Init Touch CST816D...\n");
-    // Touch_Init();
-
-    /* 8. LCD 背光 PWM (TIM2_CH3) */
-    // LCD_BL_SetBrightness(80);  /* 80% */
+    /* === 临时: LCD 刷屏调试, 一直循环刷色, 不往下走 === */
+    printf("[CodeBot] LCD debug: color cycle loop...\n");
+    while (1) {
+        LCD_DebugColorCycle(500);   /* 红/绿/蓝/白/黑, 每色 500ms */
+    }
 
     /* 9. USB 复合设备初始化 (Vendor + HID Keyboard) */
     printf("[CodeBot] Init USB composite...\n");

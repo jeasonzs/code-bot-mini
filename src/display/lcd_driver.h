@@ -15,6 +15,12 @@
 #define LCD_HEIGHT           172
 #define LCD_PIXELS           ((uint32_t)LCD_WIDTH * LCD_HEIGHT)
 
+/* GC9307 是 240x320 控制器; 172 短边在 RAM 中居中, 间隙 (240-172)/2=34。
+ * 横屏(MADCTL 0x68, MV=1): 短边=高度, 偏移加在行(RASET/Y), 列(X)不偏移。
+ * 若改竖屏(MADCTL 0x48, 172 宽): 改成 X=34, Y=0。 */
+#define LCD_X_OFFSET         0
+#define LCD_Y_OFFSET         34
+
 /* 颜色格式: RGB565 (16-bit) */
 typedef uint16_t lcd_color_t;
 
@@ -38,5 +44,13 @@ void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t 
 
 /* 设置背光亮度 (0-100, 0=灭, 100=最亮) */
 void LCD_BL_SetBrightness(uint8_t pct);
+
+/* ===== 调试辅助 ===== */
+
+/* 纯色循环 (红/绿/蓝/白/黑), 每色停留 ms 毫秒 */
+void LCD_DebugColorCycle(uint16_t ms);
+
+/* 对齐图案 (外边框 + 四角方块 + 居中十字), 用于核对偏移是否贴屏边 */
+void LCD_DebugAlignPattern(void);
 
 #endif /* LCD_DRIVER_H */
