@@ -90,14 +90,15 @@ static void handle_cmd_draw_rects(const uint8_t *payload, uint16_t len) {
         pixel_bytes_total += pixels_size;
         rect_w_sum += w;
         if (h > rect_h_max) rect_h_max = h;
-        LCD_DrawRect(x, y, w, h, &payload[off]);
+        /* host 端按 LE 发送 RGB565 像素 (与 MCU 一致), 驱动内部 swap 成 BE 发给 GC9307 */
+        LCD_DrawRect(x, y, w, h, (const lcd_color_t *)&payload[off]);
         off += pixels_size;
     }
 
     extern volatile uint32_t g_ticks_ms;
-    printf("[DBG] draw_rects count=%u payload=%u pixel_bytes=%u tick=%u\n",
-           (unsigned)count, (unsigned)len,
-           (unsigned)pixel_bytes_total, (unsigned)g_ticks_ms);
+    printf("[DBG] draw_rects count=%d payload=%d pixel_bytes=%d tick=%d\n",
+           (int)count, (int)len,
+           (int)pixel_bytes_total, (int)g_ticks_ms);
 }
 
 static void handle_cmd_hid_keystrokes(const uint8_t *payload, uint16_t len) {

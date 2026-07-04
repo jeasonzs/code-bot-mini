@@ -144,7 +144,7 @@ int main(void) {
     printf("[CodeBot] Init LCD GC9307...\n");
     LCD_Init();
     LCD_BL_SetBrightness(80);
-    LCD_Clear(LCD_COLOR_RED);
+    LCD_DebugAlignPattern();
 
     /* 7. (触摸 CST816D 暂不调试) */
 

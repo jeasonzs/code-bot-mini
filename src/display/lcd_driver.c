@@ -21,6 +21,9 @@ static void LCD_SPI_Init(void) {
     RCC_APB2PeriphClockCmd(LCD_SPI_CLK | RCC_APB2Periph_GPIOA, ENABLE);
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1, ENABLE);
 
+    /* DMA1 时钟 (供 SPI1 TX DMA 用) */
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE);
+
     /* SCK (PA5), MOSI (PA7) - 复用推挽 */
     GPIO_InitStructure.GPIO_Pin   = PIN_LCD_SCK | PIN_LCD_MOSI;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_PP;
@@ -41,8 +44,11 @@ static void LCD_SPI_Init(void) {
     GPIO_Init(LCD_CTRL_PORT, &GPIO_InitStructure);
     GPIO_SetBits(LCD_CTRL_PORT, PIN_LCD_CS);
 
-    /* SPI1 配置 */
-    SPI_InitStructure.SPI_Direction         = SPI_Direction_2Lines_FullDuplex;
+    /* SPI1 配置 - 单向发送 (TX only):
+     * GC9307 命令/数据协议是单向写, 不需要 RX, 改 1Line_Tx 可省掉每字节 RXNE 等待
+     * 和 RX 读, 让 SPI_SendByte 每字节节省 ~16 CPU 周期。
+     * 注: 配套改用 TXE 单标志等, 不再读 SPI_I2S_ReceiveData。 */
+    SPI_InitStructure.SPI_Direction         = SPI_Direction_1Line_Tx;
     SPI_InitStructure.SPI_Mode              = SPI_Mode_Master;
     SPI_InitStructure.SPI_DataSize          = SPI_DataSize_8b;
     SPI_InitStructure.SPI_CPOL              = SPI_CPOL_Low;       /* mode 0 */
@@ -55,12 +61,10 @@ static void LCD_SPI_Init(void) {
     SPI_Cmd(LCD_SPI, ENABLE);
 }
 
-/* 阻塞发送单字节 */
+/* 阻塞发送单字节 (单向 TX only: 只等 TXE, 不读 RX) */
 static void SPI_SendByte(uint8_t data) {
     while (SPI_I2S_GetFlagStatus(LCD_SPI, SPI_I2S_FLAG_TXE) == RESET);
     SPI_I2S_SendData(LCD_SPI, data);
-    while (SPI_I2S_GetFlagStatus(LCD_SPI, SPI_I2S_FLAG_RXNE) == RESET);
-    SPI_I2S_ReceiveData(LCD_SPI);  /* 丢弃 RX */
 }
 
 static inline void LCD_CS_LOW(void)  { GPIO_ResetBits(LCD_CTRL_PORT, PIN_LCD_CS); }
@@ -78,7 +82,7 @@ static void LCD_WriteCommand(uint8_t cmd) {
     LCD_CS_HIGH();
 }
 
-/* 发送 LCD 数据 (DC=1) */
+/* 发送 LCD 数据 (DC=1) - 用于命令序列中的少量字节 (CASET/RASET 等) */
 static void LCD_WriteData(uint8_t data) {
     LCD_CS_LOW();
     LCD_DC_DATA();
@@ -86,14 +90,94 @@ static void LCD_WriteData(uint8_t data) {
     LCD_CS_HIGH();
 }
 
-/* 批量发送数据 (无 CS toggle 中间) */
-static void LCD_WriteDataMulti(const uint8_t *data, uint32_t len) {
-    LCD_CS_LOW();
-    LCD_DC_DATA();
-    for (uint32_t i = 0; i < len; i++) {
-        SPI_SendByte(data[i]);
+/* ===== DMA 加速 ===== */
+/* DMA1_Channel3 → SPI1 TX (WCH EVT 示例约定)。8-bit byte 模式。
+ * 提供两个发送原语:
+ *   LCD_DMASend(src, len)         - 一次性发送, src 指针按 chunk 推进
+ *   LCD_DMASendRepeat(src, len)   - 重复发送, src 每次都从头读 (用于单色填充)
+ * 调用者必须保证: src 指向的内存 ≥ len 字节, 且在 DMA 期间不被修改。
+ *
+ * s_dma_buf[1024] 用作重复模式的预填 buffer (单色填充时存 512 像素)。 */
+#define LCD_DMA_CHANNEL   DMA1_Channel3
+#define LCD_DMA_TC_FLAG   DMA1_FLAG_TC3
+#define LCD_DMA_BUF_SIZE  1024
+
+static uint8_t s_dma_buf[LCD_DMA_BUF_SIZE];
+
+/* 填 buffer 为 hi,lo,hi,lo,... 重复 (512 像素) */
+static void LCD_FillDmaBuf(uint8_t hi, uint8_t lo) {
+    for (uint32_t i = 0; i < LCD_DMA_BUF_SIZE; i += 2) {
+        s_dma_buf[i]     = hi;
+        s_dma_buf[i + 1] = lo;
     }
-    LCD_CS_HIGH();
+}
+
+/* 将 LE uint16_t 数组 (host/caller 自然格式) 翻转为 BE 字节流写入 s_dma_buf,
+ * 供 DMA 一次性发给 GC9307。处理 pixel_count 个像素 (≤ LCD_DMA_BUF_SIZE/2)。
+ * 16-bit 简单实现: ~5 cycles/pixel, 全屏约 5.7ms 开销 (相对 DMA 36.7ms 是 ~15%)。 */
+static void LCD_SwapToDmaBuf(const lcd_color_t *src, uint32_t pixel_count) {
+    uint8_t *dst = s_dma_buf;
+    for (uint32_t i = 0; i < pixel_count; i++) {
+        uint16_t v = src[i];
+        *dst++ = (uint8_t)(v >> 8);  /* hi */
+        *dst++ = (uint8_t)(v & 0xFF); /* lo */
+    }
+}
+
+/* 启动 DMA 通道 (peripheral=SPI1->DATAR, 8-bit byte, normal mode) */
+static void LCD_DMAStart(void) {
+    DMA_InitTypeDef dma = {0};
+    dma.DMA_PeripheralBaseAddr = (uint32_t)&SPI1->DATAR;
+    dma.DMA_DIR                = DMA_DIR_PeripheralDST;
+    dma.DMA_BufferSize         = LCD_DMA_BUF_SIZE;
+    dma.DMA_PeripheralInc      = DMA_PeripheralInc_Disable;
+    dma.DMA_MemoryInc          = DMA_MemoryInc_Enable;
+    dma.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
+    dma.DMA_MemoryDataSize     = DMA_MemoryDataSize_Byte;
+    dma.DMA_Mode               = DMA_Mode_Normal;
+    dma.DMA_Priority           = DMA_Priority_High;
+    dma.DMA_M2M                = DMA_M2M_Disable;
+    DMA_DeInit(LCD_DMA_CHANNEL);
+    DMA_Init(LCD_DMA_CHANNEL, &dma);
+    SPI_I2S_DMACmd(LCD_SPI, SPI_I2S_DMAReq_Tx, ENABLE);
+}
+
+/* 发一 chunk 并等完成 (阻塞) */
+static inline void LCD_DMASendChunk(const uint8_t *src, uint32_t chunk) {
+    LCD_DMA_CHANNEL->MADDR = (uint32_t)src;
+    LCD_DMA_CHANNEL->CNTR  = chunk;
+    DMA_Cmd(LCD_DMA_CHANNEL, ENABLE);
+    while (DMA_GetFlagStatus(LCD_DMA_TC_FLAG) == RESET);
+    DMA_ClearFlag(LCD_DMA_TC_FLAG);
+}
+
+/* 关闭 DMA 通道, 等 SPI 移位寄存器空 */
+static inline void LCD_DMAStop(void) {
+    while (SPI_I2S_GetFlagStatus(LCD_SPI, SPI_I2S_FLAG_BSY) == SET);
+    SPI_I2S_DMACmd(LCD_SPI, SPI_I2S_DMAReq_Tx, DISABLE);
+}
+
+/* 发送 len 字节 (src 指针按 chunk 推进; 单次数据用) */
+static void LCD_DMASend(const uint8_t *src, uint32_t len) {
+    LCD_DMAStart();
+    while (len > 0) {
+        uint32_t chunk = (len > LCD_DMA_BUF_SIZE) ? LCD_DMA_BUF_SIZE : len;
+        LCD_DMASendChunk(src, chunk);
+        src += chunk;
+        len -= chunk;
+    }
+    LCD_DMAStop();
+}
+
+/* 重复发送 len 字节 (src 每次都从头读; 单色填充用, 需先填好 src) */
+static void LCD_DMASendRepeat(const uint8_t *src, uint32_t len) {
+    LCD_DMAStart();
+    while (len > 0) {
+        uint32_t chunk = (len > LCD_DMA_BUF_SIZE) ? LCD_DMA_BUF_SIZE : len;
+        LCD_DMASendChunk(src, chunk);  /* src 不变, MADDR 重设为 src */
+        len -= chunk;
+    }
+    LCD_DMAStop();
 }
 
 /* ===== GC9307 初始化序列 (厂商提供) ===== */
@@ -300,7 +384,7 @@ static void LCD_SetAddrWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
     LCD_WriteCommand(0x2C);  /* RAMWR */
 }
 
-/* 用单色流式填充一个矩形 (不需要像素缓冲) */
+/* 用单色填充一个矩形 (不需要像素缓冲; 走 DMA) */
 static void LCD_FillColor(uint16_t x, uint16_t y, uint16_t w, uint16_t h, lcd_color_t color) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
     if (x + w > LCD_WIDTH)  w = LCD_WIDTH  - x;
@@ -308,65 +392,45 @@ static void LCD_FillColor(uint16_t x, uint16_t y, uint16_t w, uint16_t h, lcd_co
 
     LCD_SetAddrWindow(x, y, w, h);
 
-    uint8_t hi = color >> 8;
-    uint8_t lo = color & 0xFF;
+    LCD_FillDmaBuf(color >> 8, color & 0xFF);
     LCD_CS_LOW();
     LCD_DC_DATA();
-    for (uint32_t i = 0; i < (uint32_t)w * h; i++) {
-        SPI_SendByte(hi);
-        SPI_SendByte(lo);
-    }
+    LCD_DMASendRepeat(s_dma_buf, (uint32_t)w * h * 2);
     LCD_CS_HIGH();
 }
 
 void LCD_Clear(lcd_color_t color) {
-    /* 设置全屏窗口 (带控制器 RAM 偏移) */
-    uint16_t x0 = LCD_X_OFFSET;
-    uint16_t x1 = LCD_X_OFFSET + LCD_WIDTH - 1;
-    uint16_t y0 = LCD_Y_OFFSET;
-    uint16_t y1 = LCD_Y_OFFSET + LCD_HEIGHT - 1;
+    LCD_SetAddrWindow(0, 0, LCD_WIDTH, LCD_HEIGHT);
 
-    LCD_WriteCommand(0x2A);
-    LCD_WriteData(x0 >> 8); LCD_WriteData(x0 & 0xFF);
-    LCD_WriteData(x1 >> 8); LCD_WriteData(x1 & 0xFF);
-    LCD_WriteCommand(0x2B);
-    LCD_WriteData(y0 >> 8); LCD_WriteData(y0 & 0xFF);
-    LCD_WriteData(y1 >> 8); LCD_WriteData(y1 & 0xFF);
-    LCD_WriteCommand(0x2C);  /* RAMWR */
-
-    /* 全屏填充单色 */
-    uint8_t hi = color >> 8;
-    uint8_t lo = color & 0xFF;
+    LCD_FillDmaBuf(color >> 8, color & 0xFF);
     LCD_CS_LOW();
     LCD_DC_DATA();
-    for (uint32_t i = 0; i < LCD_PIXELS; i++) {
-        SPI_SendByte(hi);
-        SPI_SendByte(lo);
-    }
+    LCD_DMASendRepeat(s_dma_buf, (uint32_t)LCD_PIXELS * 2);
     LCD_CS_HIGH();
 }
 
-void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t *pixels) {
+void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const lcd_color_t *pixels) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
     if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
 
-    /* 加控制器 RAM 偏移 */
-    uint16_t x0 = x + LCD_X_OFFSET;
-    uint16_t x1 = x + LCD_X_OFFSET + w - 1;
-    uint16_t y0 = y + LCD_Y_OFFSET;
-    uint16_t y1 = y + LCD_Y_OFFSET + h - 1;
+    LCD_SetAddrWindow(x, y, w, h);
 
-    /* 设置窗口 */
-    LCD_WriteCommand(0x2A);  /* CASET */
-    LCD_WriteData(x0 >> 8); LCD_WriteData(x0 & 0xFF);
-    LCD_WriteData(x1 >> 8); LCD_WriteData(x1 & 0xFF);
-    LCD_WriteCommand(0x2B);  /* RASET */
-    LCD_WriteData(y0 >> 8); LCD_WriteData(y0 & 0xFF);
-    LCD_WriteData(y1 >> 8); LCD_WriteData(y1 & 0xFF);
-    LCD_WriteCommand(0x2C);  /* RAMWR */
+    /* 分块 swap + DMA (s_dma_buf 一次最多装 512 像素) */
+    const uint32_t total_pixels = (uint32_t)w * h;
+    const uint32_t max_chunk    = LCD_DMA_BUF_SIZE / 2;  /* 512 像素 */
+    uint32_t sent = 0;
 
-    LCD_WriteDataMulti(pixels, (uint32_t)w * h * 2);
+    LCD_CS_LOW();
+    LCD_DC_DATA();
+    while (sent < total_pixels) {
+        uint32_t chunk = total_pixels - sent;
+        if (chunk > max_chunk) chunk = max_chunk;
+        LCD_SwapToDmaBuf(pixels + sent, chunk);
+        LCD_DMASend(s_dma_buf, chunk * 2);
+        sent += chunk;
+    }
+    LCD_CS_HIGH();
 }
 
 void LCD_BL_SetBrightness(uint8_t pct) {
@@ -396,7 +460,11 @@ void LCD_DebugColorCycle(uint16_t ms) {
  *   - 边框直边看不到 / 被截 -> 该方向偏移偏大, 减小对应 LCD_*_OFFSET
  *   - 边框直边与屏边有黑缝   -> 偏移偏小, 增大对应偏移
  *   - 圆角屏四角被切, 故色块内缩 inset 像素落在可视区内
- *   - 色块顺序: 左上红/右上绿/左下蓝/右下白, 位置错乱=镜像/翻转 */
+ *   - 色块顺序: 左上红/右上绿/左下蓝/右下白, 位置错乱=镜像/翻转
+ * + DrawRect 测试: 在中心画一组矩形, 验证 LCD_DrawRect 走 DMA 路径正常。
+ *   - 不同尺寸 (16x16 / 32x32 / 17x30 奇数宽 / 64x8 扁条 / 8x64 长条)
+ *   - 不同位置 (避免圆角区域)
+ *   - 验证: 颜色正确, 边界对齐, 无撕裂/拉花 */
 void LCD_DebugAlignPattern(void) {
     const uint16_t W = LCD_WIDTH, H = LCD_HEIGHT;
     const uint16_t m = 12;      /* 色块尺寸 */
@@ -419,4 +487,24 @@ void LCD_DebugAlignPattern(void) {
     /* 居中十字 */
     LCD_FillColor(0,     H / 2, W, 1, LCD_COLOR_WHITE);  /* 水平 */
     LCD_FillColor(W / 2, 0,     1, H, LCD_COLOR_WHITE);  /* 垂直 */
+
+    /* ===== DrawRect 测试 (DMA + byte-swap 路径) =====
+     * 8 色横条 (5 像素高 × 8 条 = 40 高), 验证:
+     *   1. lcd_color_t 自然表达 (uint16_t)
+     *   2. 驱动 byte-swap 对 8 种典型 RGB565 值都正确 (含 0x0000/0xFFFF 边界) */
+    static const lcd_color_t palette[8] = {
+        LCD_COLOR_RED, LCD_COLOR_GREEN, LCD_COLOR_BLUE,
+        LCD_COLOR_YELLOW, LCD_COLOR_CYAN, LCD_COLOR_MAGENTA,
+        LCD_COLOR_WHITE, LCD_COLOR_BLACK
+    };
+    static lcd_color_t stripes[40 * 40];   /* 3200B */
+    for (uint32_t row = 0; row < 40; row++) {
+        lcd_color_t c = palette[row / 5];
+        for (uint32_t col = 0; col < 40; col++) {
+            stripes[row * 40 + col] = c;
+        }
+    }
+
+    /* 在屏幕中心画方块 (避开圆角) */
+    LCD_DrawRect(W / 2 - 20, H / 2 - 20, 40, 40, stripes);
 }

@@ -29,6 +29,9 @@ typedef uint16_t lcd_color_t;
 #define LCD_COLOR_RED        0xF800
 #define LCD_COLOR_GREEN      0x07E0
 #define LCD_COLOR_BLUE       0x001F
+#define LCD_COLOR_YELLOW     0xFFE0
+#define LCD_COLOR_CYAN       0x07FF
+#define LCD_COLOR_MAGENTA    0xF81F
 
 /* 初始化 (时钟 + SPI + GC9307 init sequence) */
 void LCD_Init(void);
@@ -39,8 +42,15 @@ void LCD_Reinit(void);
 /* 全屏填充 */
 void LCD_Clear(lcd_color_t color);
 
-/* 绘制一个矩形 (x, y, w, h, pixels 紧跟其后, RGB565 按行) */
-void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t *pixels);
+/* 绘制一个矩形 (x, y, w, h, pixels 紧跟其后, RGB565 按行)
+ *
+ * pixels 字节序约定: 每像素 uint16_t (lcd_color_t) 按 host 端 LE 布局。
+ * 驱动内部负责 byte-swap 成 GC9307 SPI 期望的 BE 字节流。
+ * 调用方直接传 uint16_t[] / lcd_color_t[] 即可, 无需手动拆 hi/lo 字节。
+ *
+ * w*h*2 字节的源 buffer 在 DMA 期间不能被修改。
+ */
+void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const lcd_color_t *pixels);
 
 /* 设置背光亮度 (0-100, 0=灭, 100=最亮) */
 void LCD_BL_SetBrightness(uint8_t pct);
