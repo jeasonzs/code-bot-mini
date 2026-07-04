@@ -143,13 +143,10 @@ int main(void) {
     // /* 6. LCD 初始化 (GC9307) */
     printf("[CodeBot] Init LCD GC9307...\n");
     LCD_Init();
-    LCD_BL_SetBrightness(50);  /* 先开背光 */
+    LCD_BL_SetBrightness(80);
+    LCD_Clear(LCD_COLOR_RED);
 
-    /* === 临时: LCD 刷屏调试, 一直循环刷色, 不往下走 === */
-    printf("[CodeBot] LCD debug: color cycle loop...\n");
-    while (1) {
-        LCD_DebugColorCycle(500);   /* 红/绿/蓝/白/黑, 每色 500ms */
-    }
+    /* 7. (触摸 CST816D 暂不调试) */
 
     /* 9. USB 复合设备初始化 (Vendor + HID Keyboard) */
     printf("[CodeBot] Init USB composite...\n");

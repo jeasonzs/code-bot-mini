@@ -73,6 +73,11 @@ static void handle_cmd_draw_rects(const uint8_t *payload, uint16_t len) {
     if (len < 1) return;
     uint8_t count = payload[0];
     uint16_t off = 1;
+
+    /* 累计像素字节数 (每个像素 2B RGB565) */
+    uint32_t pixel_bytes_total = 0;
+    uint16_t rect_w_sum = 0, rect_h_max = 0;
+
     for (uint8_t i = 0; i < count && off < len; i++) {
         if (off + 8 > len) break;
         uint16_t x = payload[off] | (payload[off+1] << 8);
@@ -82,9 +87,17 @@ static void handle_cmd_draw_rects(const uint8_t *payload, uint16_t len) {
         off += 8;
         uint32_t pixels_size = (uint32_t)w * h * 2;
         if (off + pixels_size > len) break;
+        pixel_bytes_total += pixels_size;
+        rect_w_sum += w;
+        if (h > rect_h_max) rect_h_max = h;
         LCD_DrawRect(x, y, w, h, &payload[off]);
         off += pixels_size;
     }
+
+    extern volatile uint32_t g_ticks_ms;
+    printf("[DBG] draw_rects count=%u payload=%u pixel_bytes=%u tick=%u\n",
+           (unsigned)count, (unsigned)len,
+           (unsigned)pixel_bytes_total, (unsigned)g_ticks_ms);
 }
 
 static void handle_cmd_hid_keystrokes(const uint8_t *payload, uint16_t len) {

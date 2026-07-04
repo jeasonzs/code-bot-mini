@@ -109,15 +109,17 @@ static void LCD_RunInitSequence(void) {
     LCD_WriteCommand(0xFE);
     LCD_WriteCommand(0xEF);
 
-    /* MADCTL: 320 宽横屏需 MV=1 (行列交换), 0x48|0x20=0x68。
-     * 实测 0x48(MV=0) 会把坐标按竖屏解释, 只沿长边刷 172 像素条带。
-     * 若显示镜像/翻转, 调整 MX(0x40)/MY(0x80) 位; 红蓝反调 BGR(0x08)。 */
+    /* MADCTL: 320 宽横屏 MV=1 + RGB 顺序(BGR=1 切回 RGB) -> 0x70。
+     * 实测默认 BGR 解析会让红/蓝互换, 绿/白不变, 故置 BGR=1 修正。 */
     LCD_WriteCommand(0x36);
-    LCD_WriteData(0x68);
+    LCD_WriteData(0x70);
 
     /* 像素格式: RGB565 (16-bit/pixel) */
     LCD_WriteCommand(0x3A);
     LCD_WriteData(0x05);
+
+    /* 显示反显开: 该 IPS 屏默认反色 (0x0000 显示成白), 需 INVON 才正常 */
+    LCD_WriteCommand(0x21);
 
     /* 内部时序 / 电荷泵配置 (厂商值) */
     LCD_WriteCommand(0x85);
@@ -389,28 +391,30 @@ void LCD_DebugColorCycle(uint16_t ms) {
     }
 }
 
-/* 对齐图案: 黑底 + 1px 白色外边框 + 四角实心方块 + 居中十字。
- * 用途: 核对 CASET/RASET 偏移是否正好贴屏边。
- *   - 边框某侧看不到 / 被截 -> 该方向偏移偏大, 减小对应 LCD_*_OFFSET
- *   - 边框某侧与屏边有黑缝   -> 偏移偏小, 增大对应偏移
- *   - 四角方块缺角          -> 长/宽方向都需再微调 */
+/* 对齐图案: 黑底 + 1px 白色外边框 + 四角色块(内缩避开圆角) + 居中十字。
+ * 用途: 核对 CASET/RASET 偏移是否正好贴屏边; 认屏幕方向。
+ *   - 边框直边看不到 / 被截 -> 该方向偏移偏大, 减小对应 LCD_*_OFFSET
+ *   - 边框直边与屏边有黑缝   -> 偏移偏小, 增大对应偏移
+ *   - 圆角屏四角被切, 故色块内缩 inset 像素落在可视区内
+ *   - 色块顺序: 左上红/右上绿/左下蓝/右下白, 位置错乱=镜像/翻转 */
 void LCD_DebugAlignPattern(void) {
     const uint16_t W = LCD_WIDTH, H = LCD_HEIGHT;
-    const uint16_t m = 8;  /* 角标尺寸 */
+    const uint16_t m = 12;      /* 色块尺寸 */
+    const uint16_t inset = 24;  /* 内缩量: 需大于圆角半径, 圆角越大调越大 */
 
     LCD_Clear(LCD_COLOR_BLACK);
 
-    /* 1px 外边框 (四条边) */
+    /* 1px 外边框 (四条边; 圆角处会被切, 直边可见) */
     LCD_FillColor(0,     0,     W, 1, LCD_COLOR_WHITE);  /* 上 */
     LCD_FillColor(0,     H - 1, W, 1, LCD_COLOR_WHITE);  /* 下 */
     LCD_FillColor(0,     0,     1, H, LCD_COLOR_WHITE);  /* 左 */
     LCD_FillColor(W - 1, 0,     1, H, LCD_COLOR_WHITE);  /* 右 */
 
-    /* 四角实心方块 (不同色便于区分方向) */
-    LCD_FillColor(0,     0,     m, m, LCD_COLOR_RED);    /* 左上 */
-    LCD_FillColor(W - m, 0,     m, m, LCD_COLOR_GREEN);  /* 右上 */
-    LCD_FillColor(0,     H - m, m, m, LCD_COLOR_BLUE);   /* 左下 */
-    LCD_FillColor(W - m, H - m, m, m, LCD_COLOR_WHITE);  /* 右下 */
+    /* 四角色块 (内缩 inset, 避开圆角; 不同色便于区分方向) */
+    LCD_FillColor(inset,         inset,         m, m, LCD_COLOR_RED);    /* 左上 */
+    LCD_FillColor(W - inset - m, inset,         m, m, LCD_COLOR_GREEN);  /* 右上 */
+    LCD_FillColor(inset,         H - inset - m, m, m, LCD_COLOR_BLUE);   /* 左下 */
+    LCD_FillColor(W - inset - m, H - inset - m, m, m, LCD_COLOR_WHITE);  /* 右下 */
 
     /* 居中十字 */
     LCD_FillColor(0,     H / 2, W, 1, LCD_COLOR_WHITE);  /* 水平 */
