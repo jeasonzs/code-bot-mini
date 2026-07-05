@@ -12,8 +12,9 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 接收 buffer: USB EP1 OUT (Vendor Bulk) -> 协议解析 */
-#define RX_BUF_SIZE   512
+/* 接收 buffer: USB EP1 OUT (Vendor Bulk) -> 协议解析
+ * 4KB 容纳 ~12 帧 (每帧 338B), 抵御 LCD_DrawRect 慢场景下的 USB 突发 */
+#define RX_BUF_SIZE   4096
 static uint8_t  s_rx_storage[RX_BUF_SIZE];
 static ringbuf_t s_rx_rb;
 static uint8_t  s_frame_buf[PROTO_MAX_FRAMESIZE];
@@ -45,8 +46,8 @@ static void proto_send_frame(uint8_t cmd, const uint8_t *payload, uint16_t len) 
 
     /* [DBG] 入口检查, 判断是否被调用 */
     extern volatile uint32_t g_ticks_ms;
-    printf("[DBG] proto_send_frame cmd=%d len=%d tick=%d\n",
-           cmd, (int)len, (int)g_ticks_ms);
+    // printf("[DBG] proto_send_frame cmd=%d len=%d tick=%d\n",
+    //        cmd, (int)len, (int)g_ticks_ms);
 
     /* CRC over header + payload */
     uint8_t crc_buf[PROTO_HEADER_SIZE + PROTO_MAX_PAYLOAD];
@@ -63,18 +64,20 @@ static void proto_send_frame(uint8_t cmd, const uint8_t *payload, uint16_t len) 
 
     /* 发送: 通过 Vendor EP2 IN */
     int snd_rc = Vendor_SendFrame(frame, frame_len);
-    printf("[DBG] Vendor_SendFrame -> %d  frame_len=%d  cmd=%d\n",
-           snd_rc, (int)frame_len, cmd);
+    // printf("[DBG] Vendor_SendFrame -> %d  frame_len=%d  cmd=%d\n",
+    //        snd_rc, (int)frame_len, cmd);
 }
 
 /* ===== 接收帧处理 ===== */
 static void handle_cmd_draw_rects(const uint8_t *payload, uint16_t len) {
-    /* 格式: [count] [rect0: x,y,w,h, pixels] [rect1] ... */
-    if (len < 1) return;
-    uint8_t count = payload[0];
-    uint16_t off = 1;
+    /* 格式: [count:2B] [rect0: x,y,w,h, pixels] [rect1] ...
+     * count 是 uint16_t (2 字节) 让像素数据落在偶地址,
+     * 避免 CH32X035 RISC-V misaligned lhu exception. */
+    if (len < 2) return;
+    uint16_t count = payload[0] | (payload[1] << 8);
+    uint16_t off = 2;
 
-    for (uint8_t i = 0; i < count && off < len; i++) {
+    for (uint16_t i = 0; i < count && off < len; i++) {
         if (off + 8 > len) break;
         uint16_t x = payload[off] | (payload[off+1] << 8);
         uint16_t y = payload[off+2] | (payload[off+3] << 8);
@@ -179,7 +182,7 @@ static void process_rx_data(void) {
                 s_hdr[0] = b;
                 s_pl_idx = 1;
                 s_state = ST_HEADER;
-                printf("[RX] magic ok tick=%d\n", (int)g_ticks_ms);
+                // printf("[RX] magic ok tick=%d\n", (int)g_ticks_ms);
             }
             /* 非 magic 直接丢弃, 不打印 (会爆) */
             break;
@@ -206,8 +209,8 @@ static void process_rx_data(void) {
             s_pl_need = hdr.length;
             s_pl_idx = 0;
             s_state = ST_PAYLOAD;
-            printf("[RX] hdr ok cmd=%d len=%d tick=%d\n",
-                   (int)hdr.cmd, (int)s_pl_need, (int)g_ticks_ms);
+            // printf("[RX] hdr ok cmd=%d len=%d tick=%d\n",
+            //        (int)hdr.cmd, (int)s_pl_need, (int)g_ticks_ms);
             break;
 
         case ST_PAYLOAD:
@@ -227,8 +230,8 @@ static void process_rx_data(void) {
                     printf("[RX] CRC fail cmd=%d calc=%d field=%d, reset\n",
                            (int)hdr.cmd, (int)calc_crc, (int)hdr.crc16);
                 } else {
-                    printf("[RX] dispatch cmd=%d len=%d tick=%d\n",
-                           (int)hdr.cmd, (int)s_pl_need, (int)g_ticks_ms);
+                    // printf("[RX] dispatch cmd=%d len=%d tick=%d\n",
+                    //        (int)hdr.cmd, (int)s_pl_need, (int)g_ticks_ms);
                     dispatch_frame(&hdr, s_frame_buf);
                 }
             }

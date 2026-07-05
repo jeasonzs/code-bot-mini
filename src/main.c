@@ -179,8 +179,6 @@ int main(void) {
         /* 1Hz PING */
         if (g_ticks_ms - last_ping >= 1000) {
             last_ping = g_ticks_ms;
-            printf("[DBG] PING-fired tick=%d last=%d\n",
-                   (int)g_ticks_ms, (int)last_ping);
             Protocol_SendPong();
         }
 

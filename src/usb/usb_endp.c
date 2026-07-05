@@ -70,19 +70,19 @@ void EP3_IN_Callback(void) {
 /* ============================================================== */
 int Vendor_SendFrame(const uint8_t *data, uint16_t len) {
     if (len == 0 || len > 64) {
-        printf("[DBG] VSF: len=%d out of range\n", (int)len);
+        // printf("[DBG] VSF: len=%d out of range\n", (int)len);
         return -1;
     }
     if (data == NULL) {
-        printf("[DBG] VSF: NULL data\n");
+        // printf("[DBG] VSF: NULL data\n");
         return -1;
     }
     if (USBFS_Endp_Busy[DEF_UEP2]) {
-        printf("[DBG] VSF: busy=1, skip\n");
+        // printf("[DBG] VSF: busy=1, skip\n");
         return -1;                                   /* 上一帧还没发完 */
     }
     uint8_t rc = USBFS_Endp_DataUp(DEF_UEP2, data, len);
-    printf("[DBG] VSF: DataUp rc=%d\n", (int)rc);
+    // printf("[DBG] VSF: DataUp rc=%d\n", (int)rc);
     return rc;
 }
 
