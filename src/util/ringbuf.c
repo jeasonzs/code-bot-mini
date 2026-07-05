@@ -47,6 +47,14 @@ int ringbuf_peek(ringbuf_t *rb, uint8_t *byte) {
     return 0;
 }
 
+int ringbuf_peek_at(const ringbuf_t *rb, uint16_t offset, uint8_t *byte) {
+    if (rb == NULL || byte == NULL) return -1;
+    if (offset >= ringbuf_available(rb)) return -1;
+    uint16_t idx = (rb->tail + offset) % rb->size;
+    *byte = rb->buf[idx];
+    return 0;
+}
+
 uint16_t ringbuf_available(const ringbuf_t *rb) {
     return (rb->size - 1 - ringbuf_space(rb));
 }

@@ -41,7 +41,7 @@ uint8_t EP1_Rx_Buf[64]  __attribute__((aligned(4)));
 void EP1_OUT_Callback(uint16_t len, const uint8_t *buf) {
     if (len == 0 || len > 64) return;
     extern volatile uint32_t g_ticks_ms;
-    printf("[DBG] EP1_OUT len=%d tick=%d\n", (int)len, (int)g_ticks_ms);
+    // printf("[DBG] EP1_OUT len=%d tick=%d\n", (int)len, (int)g_ticks_ms);
     for (uint16_t i = 0; i < len; i++) {
         Protocol_RxByte(buf[i]);
     }

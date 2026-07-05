@@ -35,6 +35,10 @@ uint16_t ringbuf_unread(ringbuf_t *rb, uint16_t len);
 /* 查看但不移除一个字节 (peek) */
 int ringbuf_peek(ringbuf_t *rb, uint8_t *byte);
 
+/* 查看但不消耗第 offset 字节 (offset=0 等价于 ringbuf_peek).
+ * 用于流式协议解析: 不读完整个 header 不敢消费 magic 字节. */
+int ringbuf_peek_at(const ringbuf_t *rb, uint16_t offset, uint8_t *byte);
+
 /* 当前可用数据长度 */
 uint16_t ringbuf_available(const ringbuf_t *rb);
 

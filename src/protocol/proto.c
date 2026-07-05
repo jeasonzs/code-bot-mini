@@ -74,10 +74,6 @@ static void handle_cmd_draw_rects(const uint8_t *payload, uint16_t len) {
     uint8_t count = payload[0];
     uint16_t off = 1;
 
-    /* 累计像素字节数 (每个像素 2B RGB565) */
-    uint32_t pixel_bytes_total = 0;
-    uint16_t rect_w_sum = 0, rect_h_max = 0;
-
     for (uint8_t i = 0; i < count && off < len; i++) {
         if (off + 8 > len) break;
         uint16_t x = payload[off] | (payload[off+1] << 8);
@@ -87,18 +83,10 @@ static void handle_cmd_draw_rects(const uint8_t *payload, uint16_t len) {
         off += 8;
         uint32_t pixels_size = (uint32_t)w * h * 2;
         if (off + pixels_size > len) break;
-        pixel_bytes_total += pixels_size;
-        rect_w_sum += w;
-        if (h > rect_h_max) rect_h_max = h;
         /* host 端按 LE 发送 RGB565 像素 (与 MCU 一致), 驱动内部 swap 成 BE 发给 GC9307 */
         LCD_DrawRect(x, y, w, h, (const lcd_color_t *)&payload[off]);
         off += pixels_size;
     }
-
-    extern volatile uint32_t g_ticks_ms;
-    printf("[DBG] draw_rects count=%d payload=%d pixel_bytes=%d tick=%d\n",
-           (int)count, (int)len,
-           (int)pixel_bytes_total, (int)g_ticks_ms);
 }
 
 static void handle_cmd_hid_keystrokes(const uint8_t *payload, uint16_t len) {
@@ -153,55 +141,100 @@ static void dispatch_frame(const proto_header_t *hdr, const uint8_t *payload) {
     }
 }
 
+/* ===== 流式解析状态机 =====
+ *
+ * 每字节只处理一次, 每个状态转移 = 一次 printf (便于调试不爆).
+ * 状态: ST_MAGIC -> ST_HEADER -> ST_PAYLOAD -> (dispatch / reset) -> ST_MAGIC
+ *
+ * 错误恢复: 一律 reset 到 ST_MAGIC, 丢弃已收集的部分字节.
+ * 这样最坏情况丢 ≤ 8 字节 (header), 不试图在 hdr[] 里二次找 magic (简单).
+ */
+typedef enum {
+    ST_MAGIC = 0,
+    ST_HEADER,
+    ST_PAYLOAD,
+} parse_state_t;
+
+static parse_state_t s_state = ST_MAGIC;
+static uint8_t  s_hdr[PROTO_HEADER_SIZE];
+static uint16_t s_pl_idx;     /* 已在 s_frame_buf / s_hdr 收集的字节数 */
+static uint16_t s_pl_need;    /* payload 期望字节数 (= hdr.length) */
+
+static inline void parser_reset(void) {
+    s_state = ST_MAGIC;
+    s_pl_idx = 0;
+    s_pl_need = 0;
+}
+
 static void process_rx_data(void) {
-    /* 找帧头: 0xCB 0x02 */
-    while (ringbuf_available(&s_rx_rb) >= PROTO_HEADER_SIZE) {
-        /* peek first byte */
+    extern volatile uint32_t g_ticks_ms;
+
+    while (1) {
         uint8_t b;
-        if (ringbuf_peek(&s_rx_rb, &b) < 0) return;
-        if (b != PROTO_MAGIC) {
-            /* 跳过非魔数字节 */
-            uint8_t discard;
-            ringbuf_read(&s_rx_rb, &discard, 1);
-            continue;
+        if (ringbuf_read(&s_rx_rb, &b, 1) != 1) return;   /* ringbuf 空, 等 */
+
+        switch (s_state) {
+        case ST_MAGIC:
+            if (b == PROTO_MAGIC) {
+                s_hdr[0] = b;
+                s_pl_idx = 1;
+                s_state = ST_HEADER;
+                printf("[RX] magic ok tick=%d\n", (int)g_ticks_ms);
+            }
+            /* 非 magic 直接丢弃, 不打印 (会爆) */
+            break;
+
+        case ST_HEADER:
+            s_hdr[s_pl_idx++] = b;
+            if (s_pl_idx < PROTO_HEADER_SIZE) break;     /* 还没收齐 */
+
+            /* 8B header 收齐, 验证 */
+            proto_header_t hdr;
+            memcpy(&hdr, s_hdr, PROTO_HEADER_SIZE);
+            if (hdr.version != PROTO_VERSION) {
+                printf("[RX] bad ver=%d cmd=%d len=%d, reset\n",
+                       (int)hdr.version, (int)hdr.cmd, (int)hdr.length);
+                parser_reset();
+                break;
+            }
+            if (hdr.length > PROTO_MAX_PAYLOAD) {
+                printf("[RX] bad len=%d > MAX=%d, reset\n",
+                       (int)hdr.length, (int)PROTO_MAX_PAYLOAD);
+                parser_reset();
+                break;
+            }
+            s_pl_need = hdr.length;
+            s_pl_idx = 0;
+            s_state = ST_PAYLOAD;
+            printf("[RX] hdr ok cmd=%d len=%d tick=%d\n",
+                   (int)hdr.cmd, (int)s_pl_need, (int)g_ticks_ms);
+            break;
+
+        case ST_PAYLOAD:
+            s_frame_buf[s_pl_idx++] = b;
+            if (s_pl_idx < s_pl_need) break;             /* 还没收齐 */
+
+            /* payload 收齐, CRC + dispatch */
+            {
+                proto_header_t hdr;
+                memcpy(&hdr, s_hdr, PROTO_HEADER_SIZE);
+                uint8_t crc_data[PROTO_HEADER_SIZE - PROTO_CRC_SIZE + PROTO_MAX_PAYLOAD];
+                size_t crc_data_len = (PROTO_HEADER_SIZE - PROTO_CRC_SIZE) + s_pl_need;
+                memcpy(crc_data, s_hdr, PROTO_HEADER_SIZE - PROTO_CRC_SIZE);
+                memcpy(crc_data + PROTO_HEADER_SIZE - PROTO_CRC_SIZE, s_frame_buf, s_pl_need);
+                uint16_t calc_crc = proto_crc16(crc_data, crc_data_len);
+                if (calc_crc != hdr.crc16) {
+                    printf("[RX] CRC fail cmd=%d calc=%d field=%d, reset\n",
+                           (int)hdr.cmd, (int)calc_crc, (int)hdr.crc16);
+                } else {
+                    printf("[RX] dispatch cmd=%d len=%d tick=%d\n",
+                           (int)hdr.cmd, (int)s_pl_need, (int)g_ticks_ms);
+                    dispatch_frame(&hdr, s_frame_buf);
+                }
+            }
+            parser_reset();
+            break;
         }
-
-        /* 读取 8B 头 (CRC 在 header 内部偏移 6-7) */
-        if (ringbuf_available(&s_rx_rb) < PROTO_HEADER_SIZE) return;
-        uint8_t hdr_bytes[PROTO_HEADER_SIZE];
-        ringbuf_read(&s_rx_rb, hdr_bytes, PROTO_HEADER_SIZE);
-
-        proto_header_t hdr;
-        memcpy(&hdr, hdr_bytes, PROTO_HEADER_SIZE);
-
-        /* 验证版本 */
-        if (hdr.version != PROTO_VERSION) continue;
-
-        uint16_t payload_len = hdr.length;
-        if (payload_len > PROTO_MAX_PAYLOAD) continue;
-
-        /* 等待 payload (CRC 已在 header 里读过了) */
-        if (ringbuf_available(&s_rx_rb) < payload_len) {
-            /* 数据未到齐, 放回头部 (简化: 丢弃) */
-            /* TODO: 实现可重入的流式解析 */
-            continue;
-        }
-
-        /* 读 payload */
-        ringbuf_read(&s_rx_rb, s_frame_buf, payload_len);
-
-        /* 验证 CRC (header[0:6] + payload) */
-        uint8_t crc_data[PROTO_HEADER_SIZE - PROTO_CRC_SIZE + PROTO_MAX_PAYLOAD];
-        size_t crc_data_len = (PROTO_HEADER_SIZE - PROTO_CRC_SIZE) + payload_len;
-        memcpy(crc_data, hdr_bytes, PROTO_HEADER_SIZE - PROTO_CRC_SIZE);
-        memcpy(crc_data + PROTO_HEADER_SIZE - PROTO_CRC_SIZE, s_frame_buf, payload_len);
-        uint16_t calc_crc = proto_crc16(crc_data, crc_data_len);
-        if (calc_crc != hdr.crc16) {
-            /* CRC 错, 丢弃 */
-            continue;
-        }
-
-        dispatch_frame(&hdr, s_frame_buf);
     }
 }
 
@@ -209,6 +242,7 @@ static void process_rx_data(void) {
 
 void Protocol_Init(void) {
     ringbuf_init(&s_rx_rb, s_rx_storage, RX_BUF_SIZE);
+    parser_reset();
     g_status = 0x01;  /* ready */
 }
 
