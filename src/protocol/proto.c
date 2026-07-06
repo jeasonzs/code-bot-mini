@@ -24,6 +24,8 @@
 /* ===== 设备状态 ===== */
 static uint32_t g_status = 0x01;  /* bit 0: ready */
 
+extern volatile uint32_t g_ticks_ms;  /* TIM3 1ms 滴答, main.c 定义 */
+
 /* ============================================================== */
 /* 内部: 通过 EP2 IN 发送 cmd + struct                              */
 /* ============================================================== */
@@ -42,6 +44,7 @@ static void dispatch_control_slot(const uint8_t *slot, uint16_t rx_len) {
     if (rx_len < 1) return;
     uint8_t cmd = slot[0];
 
+    printf("[CMD] 0x%x @%dms\n", cmd, (int)g_ticks_ms);
     switch (cmd) {
     case CMD_PING:
         /* 心跳: 设备回 PONG */
@@ -134,7 +137,9 @@ void Protocol_PollPixels(void) {
             RingBuffer_Comm_EP5.DealPtr = 0;
         }
         RingBuffer_Comm_EP5.RemainPack--;
-
+        if (RingBuffer_Comm_EP5.StopFlag) {
+            printf("RemainPack=%d\n", RingBuffer_Comm_EP5.RemainPack);
+        }
         /* back-pressure: 消费到 restart 阈值下, 重新 ACK EP5 OUT */
         if (RingBuffer_Comm_EP5.StopFlag &&
             RingBuffer_Comm_EP5.RemainPack < (DEF_Ring_Buffer_Max_Blks - DEF_RING_BUFFER_RESTART)) {

@@ -218,7 +218,7 @@ void delay_ms(uint32_t ms);
     #define DEBUG_USART_GPIO_CLK     RCC_APB2Periph_GPIOC
     #define DEBUG_USART_TX_PIN       GPIO_Pin_18    /* PC18 */
     #define DEBUG_USART_RX_PIN       GPIO_Pin_19    /* PC19 */
-    #define DEBUG_USART_BAUDRATE     9600   /* ⚠ DO NOT CHANGE: 见顶部 NOTE_9600_57600 */
+    #define DEBUG_USART_BAUDRATE     921600   /* ⚠ DO NOT CHANGE: 见顶部 NOTE_9600_57600 */
     #define DEBUG_USART_REMAP()      do {                                              \
         GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, ENABLE);                          \
         GPIO_PinRemapConfig(GPIO_PartialRemap1_USART3, ENABLE);                       \
