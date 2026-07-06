@@ -112,6 +112,11 @@ extern volatile uint8_t  USBFS_Endp_Busy[ ];
 extern RING_BUFF_COMM  RingBuffer_Comm;
 extern __attribute__ ((aligned(4))) uint8_t  Data_Buffer[ ];
 
+/* Code Bot v0.18: EP5 OUT image data 用同一个 RING_BUFF_COMM 结构, 跟 EP1 同构.
+ * 16 槽 64B = 1KB (跟 EP1 一样), main loop 消费. */
+extern RING_BUFF_COMM  RingBuffer_Comm_EP5;
+extern __attribute__ ((aligned(4))) uint8_t  Data_Buffer5[ ];
+
 /******************************************************************************/
 /* external functions */
 extern void USBFS_Device_Init( FunctionalState sta , PWR_VDD VDD_Voltage);
@@ -120,10 +125,6 @@ extern void USBFS_RCC_Init(void);
 
 /* Code Bot: 通用 IN 端点上传. 成功 0, 失败 1 (忙/未使能/参数错). */
 extern uint8_t USBFS_Endp_DataUp(uint8_t endp, const uint8_t *pbuf, uint16_t len);
-
-/* Code Bot: WCH 库 EP1 OUT ISR 末尾调用的弱符号, 应用层实现.
- * 缺省 NULL → 库不通知, 数据留在 WCH 环里. */
-void EP1_OUT_Callback(uint16_t len, const uint8_t *buf) __attribute__((weak));
 
 #ifdef __cplusplus
 }

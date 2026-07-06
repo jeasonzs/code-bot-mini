@@ -3,6 +3,12 @@
  * @brief   LCD 驱动接口 (GC9307 / ST7789V3)
  *
  * 通过 SPI1 (PA4/5/6/7) 驱动 GC9307 1.47" 320x172 IPS
+ *
+ * v0.18 流式 API:
+ *   - LCD_BeginRect + LCD_WritePixelsStream + LCD_EndRect: 流式推像素
+ *   - LCD_AbortStream: 强制中断当前流
+ *   - LCD_IsStreaming: 查询当前是否在流式状态
+ *   - EP5_OUT_Callback: 弱符号 (USB 库调用), 触发流式 DMA
  */
 
 #ifndef LCD_DRIVER_H
@@ -54,6 +60,31 @@ void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const lcd_colo
 
 /* 设置背光亮度 (0-100, 0=灭, 100=最亮) */
 void LCD_BL_SetBrightness(uint8_t pct);
+
+/* ============================================================== */
+/* v0.18: 流式绘制 API (EP5 OUT image data → SPI DMA 直通 LCD)   */
+/* ============================================================== */
+
+/* 开始一个绘制矩形: SetAddrWindow + CS_LOW + DC_DATA */
+void LCD_BeginRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+
+/* 礼貌结束: 调用前保证已把所有像素 LCD_WritePixelsStream 完, CS_HIGH 即可 */
+void LCD_EndRect(void);
+
+/* 强制结束: 立即 CS_HIGH, 丢剩余. 用于异常恢复 (CMD_DRAW_RECT_ABORT) */
+void LCD_AbortStream(void);
+
+/* EP5 OUT 收到的像素 buffer (RGB565 大端字节流, 匹配 GC9307 SPI 期望) 通过
+ * 这个函数进 SPI DMA. MCU 不做 byte-swap, 直接 DMA from buf → SPI.
+ *
+ * 同步阻塞: 启 DMA 后死等 TC flag, 再等 SPI BSY 清零 (最后一字节已移出).
+ * 调用返回时 SPI 已空闲, 可以安全 CS_HIGH. */
+void LCD_WritePixelsStream(const uint8_t *buf, uint16_t len);
+
+/* SPI TX DMA 完成回调 (在 DMA1_Channel3 ISR 里调用)
+ * - 清 s_dma_busy flag
+ * - 若 s_pending_end: CS_HIGH, 清除 pending */
+void LCD_WritePixelsStreamDmaDone(void);
 
 /* ===== 调试辅助 ===== */
 

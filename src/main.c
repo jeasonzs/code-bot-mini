@@ -167,8 +167,11 @@ int main(void) {
     uint32_t last_ping = 0;
 
     while (1) {
-        /* 处理 USB 事件 (Vendor OUT 命令解析) */
+        /* 处理 USB 事件 (EP1 OUT 控制命令解析) */
         Protocol_Poll();
+
+        /* 处理 EP5 OUT 图像数据流 (从 EP5 ring buffer 拉一包, SPI DMA 推 LCD) */
+        Protocol_PollPixels();
 
         /* 处理触摸事件 (I2C 读 + 上报 host) */
         // Touch_Poll();

@@ -35,12 +35,12 @@
 
 /* 端点大小 */
 #define USB_EP0_SIZE               64
-#define USB_EP1_SIZE               64   /* Vendor OUT */
-#define USB_EP2_SIZE               64   /* Vendor IN  */
-#define USB_EP3_SIZE               8    /* HID IN   (interrupt) */
-#define USB_EP4_SIZE               64   /* CDC OUT  */
-#define USB_EP5_SIZE               64   /* CDC IN   */
-#define USB_EP6_SIZE               8    /* CDC NOTIFY */
+#define USB_EP1_SIZE               64   /* Vendor OUT (control) */
+#define USB_EP2_SIZE               64   /* Vendor IN  (response) */
+#define USB_EP3_SIZE               8    /* HID IN     (interrupt) */
+#define USB_EP4_SIZE               64   /* (保留 - CH32X035 EP4 buffer 复用 EP0, 不可用) */
+#define USB_EP5_SIZE               64   /* Vendor OUT (image data) */
+#define USB_EP6_SIZE               8    /* (保留) */
 
 /* HID Report 描述符长度 (放在 usb_desc.c 定义) */
 #define HID_REPORT_DESC_LEN        64   /* 标准 Keyboard report (8B modifier+rsvd+6 keys) */

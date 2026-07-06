@@ -50,6 +50,12 @@ __attribute__ ((aligned(4))) uint8_t USBFS_EP0_Buf[DEF_USBD_UEP0_SIZE];
 __attribute__ ((aligned(4))) uint8_t USBFS_EP2_Buf[DEF_USB_EP2_FS_SIZE];
 __attribute__ ((aligned(4))) uint8_t USBFS_EP3_Buf[DEF_USB_EP3_FS_SIZE];   /* Code Bot: EP3 HID IN */
 
+/* Code Bot v0.18: EP5 OUT image data ring buffer (跟 EP1 同构, 16 槽 × 64B = 1KB)
+ * 注: 用 EP5 不是 EP4 是因为 CH32X035 EP4 没有独立 DMA 寄存器 (buffer 复用
+ *     EP0/UEP0_DMA+64), 不能用作 bulk 数据端点. EP5 有 UEP5_DMA, 独立 buffer. */
+__attribute__ ((aligned(4))) uint8_t Data_Buffer5[DEF_RING_BUFFER_SIZE];
+RING_BUFF_COMM RingBuffer_Comm_EP5;
+
 /* USB IN Endpoint Busy Flag */
 volatile uint8_t  USBFS_Endp_Busy[ DEF_UEP_NUM ];
 
@@ -85,19 +91,34 @@ void USBFS_RCC_Init(void)
  */
 void USBFS_Device_Endp_Init( void )
 {
+    /* Code Bot v0.18: EP1 OUT (control) */
     USBFSD->UEP4_1_MOD = USBFS_UEP1_RX_EN;
     /* Code Bot: 改为 EP2 TX + EP3 TX 同时使能 (0x44) */
     USBFSD->UEP2_3_MOD = USBFS_UEP2_TX_EN | USBFS_UEP3_TX_EN;
+    /* Code Bot v0.18: EP5 OUT (image data) */
+    USBFSD->UEP567_MOD = USBFS_UEP5_RX_EN;
 
     USBFSD->UEP0_DMA = (uint32_t)USBFS_EP0_Buf;
     USBFSD->UEP1_DMA = (uint32_t)Data_Buffer;
     USBFSD->UEP2_DMA = (uint32_t)USBFS_EP2_Buf;
     USBFSD->UEP3_DMA = (uint32_t)USBFS_EP3_Buf;   /* Code Bot */
+    USBFSD->UEP5_DMA = (uint32_t)Data_Buffer5;   /* Code Bot v0.18: EP5 OUT image data, slot 0 */
 
     USBFSD->UEP0_CTRL_H = USBFS_UEP_T_RES_NAK | USBFS_UEP_R_RES_ACK;
     USBFSD->UEP1_CTRL_H = USBFS_UEP_R_RES_ACK;
     USBFSD->UEP2_CTRL_H = USBFS_UEP_T_RES_NAK;
     USBFSD->UEP3_CTRL_H = USBFS_UEP_T_RES_NAK;   /* Code Bot */
+    /* EP5 默认 NAK: 数据通道默认关闭, 等 DRAW_RECT_BEGIN 显式开 */
+    USBFSD->UEP5_CTRL_H = USBFS_UEP_T_RES_NAK | USBFS_UEP_R_RES_ACK;   /* Code Bot v0.18 */
+
+    /* 清 EP5 ring buffer */
+    RingBuffer_Comm_EP5.LoadPtr = 0;
+    RingBuffer_Comm_EP5.DealPtr = 0;
+    RingBuffer_Comm_EP5.RemainPack = 0;
+    RingBuffer_Comm_EP5.StopFlag = 0;
+    for (uint8_t i = 0; i < DEF_Ring_Buffer_Max_Blks; i++) {
+        RingBuffer_Comm_EP5.PackLen[i] = 0;
+    }
 
     /* Clear End-points Busy Status */
     for(uint8_t i=0; i<DEF_UEP_NUM; i++ )
@@ -288,7 +309,10 @@ void USBFS_IRQHandler( void )
                     case USBFS_UIS_TOKEN_OUT | DEF_UEP1:
                         if ( intst & USBFS_UIS_TOG_OK )
                         {
-                            /* Write In Buffer */
+                            /* Code Bot v0.18: 真实 ring buffer 语义.
+                             * ISR 只入队 (更新 LoadPtr/RemainPack), 由 main loop 的
+                             * Protocol_Poll 按 DealPtr 消费 + 翻 ACK.
+                             * 这里不调 EP1_OUT_Callback (旧 byte-bounce 已删). */
                             USBFSD->UEP1_CTRL_H ^= USBFS_UEP_R_TOG;
                             RingBuffer_Comm.PackLen[RingBuffer_Comm.LoadPtr] = USBFSD->RX_LEN;
                             RingBuffer_Comm.LoadPtr ++;
@@ -303,31 +327,29 @@ void USBFS_IRQHandler( void )
                                 USBFSD->UEP1_CTRL_H = (USBFSD->UEP1_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_NAK;
                                 RingBuffer_Comm.StopFlag = 1;
                             }
+                        }
+                        break;
 
-                            /* Code Bot: 通知应用层处理刚收到的 EP1 OUT 数据.
-                             * EP1_OUT_Callback 由应用层提供, 弱符号默认 NULL.
-                             * 回调在 ISR 上下文, 应用须短小/不可阻塞. */
+                    /* Code Bot v0.18: end-point 5 data out interrupt (image data stream)
+                     * 跟 EP1 OUT 完全同构: ISR 只入队 (更新 ring buffer 索引), 由 main loop
+                     * 的 Protocol_PollPixels 按 DealPtr 消费 + 翻 ACK.
+                     * 不调任何应用层 callback, 不暴露 USB 寄存器. */
+                    case USBFS_UIS_TOKEN_OUT | DEF_UEP5:
+                        if ( intst & USBFS_UIS_TOG_OK )
+                        {
+                            USBFSD->UEP5_CTRL_H ^= USBFS_UEP_R_TOG;
+                            RingBuffer_Comm_EP5.PackLen[RingBuffer_Comm_EP5.LoadPtr] = USBFSD->RX_LEN;
+                            RingBuffer_Comm_EP5.LoadPtr++;
+                            if(RingBuffer_Comm_EP5.LoadPtr == DEF_Ring_Buffer_Max_Blks)
                             {
-                                extern void EP1_OUT_Callback(uint16_t len, const uint8_t *buf) __attribute__((weak));
-                                uint8_t last_ptr = (RingBuffer_Comm.LoadPtr + DEF_Ring_Buffer_Max_Blks - 1) % DEF_Ring_Buffer_Max_Blks;
-                                if (EP1_OUT_Callback) {
-                                    EP1_OUT_Callback(RingBuffer_Comm.PackLen[last_ptr],
-                                                     &Data_Buffer[last_ptr * DEF_USBD_FS_PACK_SIZE]);
-                                }
+                                RingBuffer_Comm_EP5.LoadPtr = 0;
                             }
-
-                            /* Code Bot: 本 fork 的 EP1_OUT_Callback 同步消费整包
-                             * (usb_endp.c 把每个字节立刻喂给 Protocol_RxByte), 所
-                             * 以本 slot 在回调返回时已经逻辑释放. 递减 RemainPack
-                             * 并在低于 restart 阈值时把 EP1 RX 重新置 ACK, 防止
-                             * 库把 EP1 OUT 永久 NAK 住. */
-                            if (RingBuffer_Comm.RemainPack > 0) {
-                                RingBuffer_Comm.RemainPack --;
-                            }
-                            if (RingBuffer_Comm.StopFlag &&
-                                RingBuffer_Comm.RemainPack < DEF_RING_BUFFER_RESTART) {
-                                USBFSD->UEP1_CTRL_H = (USBFSD->UEP1_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_ACK;
-                                RingBuffer_Comm.StopFlag = 0;
+                            USBFSD->UEP5_DMA = (uint32_t)(&Data_Buffer5[(RingBuffer_Comm_EP5.LoadPtr) * DEF_USBD_FS_PACK_SIZE]);
+                            RingBuffer_Comm_EP5.RemainPack++;
+                            if(RingBuffer_Comm_EP5.RemainPack >= DEF_Ring_Buffer_Max_Blks - DEF_RING_BUFFER_REMINE)
+                            {
+                                USBFSD->UEP5_CTRL_H = (USBFSD->UEP5_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_NAK;
+                                RingBuffer_Comm_EP5.StopFlag = 1;
                             }
                         }
                         break;
@@ -459,10 +481,10 @@ void USBFS_IRQHandler( void )
                                 case USB_DESCR_TYP_HID:
                                     if (USBFS_SetupReqIndex == 0x01)   /* Code Bot: interface 1 */
                                     {
-                                        /* Code Bot: HID descriptor 在 MyCfgDescr[41]
+                                        /* Code Bot v0.18: HID descriptor 在 MyCfgDescr[48]
                                          *   (offset 0-8: cfg, 9-17: if0, 18-24: EP1, 25-31: EP2,
-                                         *    32-40: if1, 41-49: HID desc) */
-                                        pUSBFS_Descr = &MyCfgDescr[41];
+                                         *    32-38: EP5, 39-47: if1, 48-56: HID desc, 57-63: EP3) */
+                                        pUSBFS_Descr = &MyCfgDescr[48];
                                         len = 0x09;
                                     }
                                     else
@@ -572,6 +594,11 @@ void USBFS_IRQHandler( void )
                                             USBFSD->UEP3_CTRL_H =  USBFS_UEP_T_RES_NAK;
                                             break;
 
+                                        case ( DEF_UEP_OUT | DEF_UEP5 ):   /* Code Bot v0.18 */
+                                            /* Set End-point 5 OUT NAK (clear halt: 重置 toggle, 关闭数据通道) */
+                                            USBFSD->UEP5_CTRL_H = USBFS_UEP_R_TOG | USBFS_UEP_R_RES_NAK;
+                                            break;
+
                                         default:
                                             errflag = 0xFF;
                                             break;
@@ -626,6 +653,9 @@ void USBFS_IRQHandler( void )
                                             break;
                                         case ( DEF_UEP_IN | DEF_UEP3 ):   /* Code Bot */
                                             USBFSD->UEP3_CTRL_H = ( USBFSD->UEP3_CTRL_H & ~USBFS_UEP_T_RES_MASK ) | USBFS_UEP_T_RES_STALL;
+                                            break;
+                                        case ( DEF_UEP_OUT | DEF_UEP5 ):   /* Code Bot v0.18 */
+                                            USBFSD->UEP5_CTRL_H = ( USBFSD->UEP5_CTRL_H & ~USBFS_UEP_R_RES_MASK ) | USBFS_UEP_R_RES_STALL;
                                             break;
 
                                         default:
@@ -687,6 +717,13 @@ void USBFS_IRQHandler( void )
                                 else if((uint8_t)(USBFS_SetupReqIndex&0xFF) == ( DEF_UEP_IN | DEF_UEP3 ))   /* Code Bot */
                                 {
                                     if( ( USBFSD->UEP3_CTRL_H & USBFS_UEP_T_RES_MASK ) == USBFS_UEP_T_RES_STALL )
+                                    {
+                                        USBFS_EP0_Buf[ 0 ] = 0x01;
+                                    }
+                                }
+                                else if((uint8_t)(USBFS_SetupReqIndex&0xFF) == ( DEF_UEP_OUT | DEF_UEP5 ))   /* Code Bot v0.18 */
+                                {
+                                    if( ( USBFSD->UEP5_CTRL_H & USBFS_UEP_R_RES_MASK ) == USBFS_UEP_R_RES_STALL )
                                     {
                                         USBFS_EP0_Buf[ 0 ] = 0x01;
                                     }

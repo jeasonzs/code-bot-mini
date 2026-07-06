@@ -1,9 +1,17 @@
 /**
  * @file    usb_desc.c
- * @brief   USB 描述符 - 复合设备 (Vendor + HID Keyboard)
+ * @brief   USB 描述符 - 复合设备 (Vendor Bulk + HID Keyboard)
  *
- * 2 接口, 3 端点, 1 配置
- * 注: CDC ACM 完整实现延后到 v0.18 (见 usb_endp.c:5 注释). v0.17 只跑 Vendor + HID.
+ * 2 接口, 4 端点, 1 配置
+ *
+ * v0.18 拓扑: 控制 / 数据 物理隔离
+ *   - EP1 OUT (bulk 64B): 控制通道 (cmd + struct, ≤64B 单包)
+ *   - EP2 IN  (bulk 64B): Vendor 响应 (PONG/TOUCH/LOG, cmd + struct)
+ *   - EP3 IN  (intr 8B):  HID Keyboard 标准 8B report
+ *   - EP5 OUT (bulk 64B): 图像数据流 (raw RGB565, SPI DMA 直通 LCD)
+ *
+ * 注: CH32X035 EP4 没有独立 DMA 寄存器, buffer 复用 EP0 (UEP0_DMA+64),
+ *     不能用作 bulk 数据端点. 改用 EP5 (有 UEP5_DMA).
  */
 
 #include "usb_desc.h"
@@ -34,28 +42,35 @@ const uint8_t MyDevDescr[18] = {
 /* ============================================================== */
 /* 配置描述符 + 接口 + 端点 (WCH 驱动期望 MyCfgDescr)                */
 /* ============================================================== */
-/* 总长 = 9 (cfg) + 9 (Vendor iface) + 7 (EP1 OUT) + 7 (EP2 IN)
+/* 总长 = 9 (cfg) + 9 (Vendor iface) + 7 (EP1 OUT) + 7 (EP2 IN) + 7 (EP5 OUT)
  *       + 9 (HID iface) + 9 (HID desc) + 7 (EP3 IN)
- *     = 9 + 9 + 7 + 7 + 9 + 9 + 7 = 57 = 0x39 字节
+ *     = 9 + 9 + 7 + 7 + 7 + 9 + 9 + 7 = 64 = 0x40 字节
  */
 const uint8_t MyCfgDescr[] = {
     /* Configuration Descriptor */
-    0x09, USB_DESC_TYPE_CONFIGURATION, 0x39, 0x00,   /* wTotalLength = 57 */
+    0x09, USB_DESC_TYPE_CONFIGURATION, 0x40, 0x00,   /* wTotalLength = 64 */
     0x02, 0x01, 0x00, 0x80, 0x32,                  /* 2 interfaces, bus-powered, 100mA */
 
     /* ============================================ */
-    /* Interface 0: Vendor (Bulk I/O) */
+    /* Interface 0: Vendor (Control + Data)        */
+    /*   EP1 OUT: 控制通道 (cmd + struct)           */
+    /*   EP2 IN:  Vendor 响应 (PONG/TOUCH/LOG)      */
+    /*   EP5 OUT: 图像数据流 (raw RGB565 → SPI DMA)  */
     /* ============================================ */
-    0x09, USB_DESC_TYPE_INTERFACE, 0x00, 0x00, 0x02,  /* alt 0, 2 endpoints */
+    0x09, USB_DESC_TYPE_INTERFACE, 0x00, 0x00, 0x03,  /* alt 0, 3 endpoints */
     0xFF, 0x00, 0x00, 0x00,                        /* Vendor class, no subclass/protocol */
 
-    /* EP1 OUT: Vendor Bulk OUT (image/cmd from host) */
+    /* EP1 OUT: Vendor Bulk OUT (control channel, host → device) */
     0x07, USB_DESC_TYPE_ENDPOINT, 0x01, 0x02,        /* EP1 OUT, bulk */
     USB_EP1_SIZE, 0x00, 0x00,                       /* 64B, no interval for bulk */
 
-    /* EP2 IN: Vendor Bulk IN (touch event to host) */
+    /* EP2 IN: Vendor Bulk IN (response, device → host) */
     0x07, USB_DESC_TYPE_ENDPOINT, 0x82, 0x02,        /* EP2 IN, bulk */
     USB_EP2_SIZE, 0x00, 0x00,
+
+    /* EP5 OUT: Vendor Bulk OUT (image data stream, host → device) */
+    0x07, USB_DESC_TYPE_ENDPOINT, 0x05, 0x02,        /* EP5 OUT, bulk */
+    USB_EP5_SIZE, 0x00, 0x00,                       /* 64B, no interval for bulk */
 
     /* ============================================ */
     /* Interface 1: HID Keyboard */
@@ -71,11 +86,6 @@ const uint8_t MyCfgDescr[] = {
     /* EP3 IN: HID Interrupt IN (keyboard report) */
     0x07, USB_DESC_TYPE_ENDPOINT, 0x83, 0x03,        /* EP3 IN, interrupt */
     USB_EP3_SIZE, 0x00, 0x01,                       /* 8B, interval=1ms (polling) */
-
-    /* CDC ACM (v0.18 再加回来):
-     *   当前硬件只使能了 EP0/EP1/EP2, EP3 复用 HID 中断
-     *   见 ch32x035_usbfs_device.c USBFS_Device_Endp_Init()
-     */
 };
 
 /* ============================================================== */

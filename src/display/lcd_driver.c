@@ -5,6 +5,15 @@
  * SPI1 @ 24MHz max, 实际用 ~18MHz 稳妥
  * 屏幕: 1.47" 320x172 IPS RGB565
  * 通信: SPI mode 0 (CPOL=0, CPHA=0), MSB first
+ *
+ * v0.18: 流式绘制 API (pull model, 跟 EP1 ring buffer 同构)
+ *   - LCD_BeginRect: 开窗 + CS_LOW + DC_DATA, 启动 streaming
+ *   - LCD_WritePixelsStream: 收一包 (从 EP5 ring buffer 拉) → memcpy → SPI DMA
+ *   - LCD_WritePixelsStreamDmaDone: DMA 完成时 CS_HIGH
+ *   - LCD_EndRect / LCD_AbortStream: 收尾
+ *
+ * 数据流: USB ISR 把 EP5 包入队到 ring buffer; main loop 调 LCD_WritePixelsStream 消费.
+ * ISR 不调应用层 callback, 应用层不碰 USB 寄存器.
  */
 
 #include "lcd_driver.h"
@@ -142,7 +151,7 @@ static void LCD_DMAStart(void) {
     SPI_I2S_DMACmd(LCD_SPI, SPI_I2S_DMAReq_Tx, ENABLE);
 }
 
-/* 发一 chunk 并等完成 (阻塞) */
+/* 发一 chunk 并等完成 (阻塞, LCD_DrawRect 用) */
 static inline void LCD_DMASendChunk(const uint8_t *src, uint32_t chunk) {
     LCD_DMA_CHANNEL->MADDR = (uint32_t)src;
     LCD_DMA_CHANNEL->CNTR  = chunk;
@@ -431,6 +440,43 @@ void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const lcd_colo
         sent += chunk;
     }
     LCD_CS_HIGH();
+}
+
+/* ============================================================== */
+/* v0.18: 流式绘制 API (同步阻塞, 0 状态)                          */
+/* ============================================================== */
+
+/* 直接从 ring buffer slot DMA 到 SPI, 不需要中转 buffer.
+ * 协议规定 host 发的是 RGB565 大端字节流 (匹配 GC9307 SPI 期望),
+ * MCU 端不做 byte-swap. ring buffer slot 在 SPI DMA 期间不会被覆盖
+ * (ISR 写 LoadPtr slot, 跟 DealPtr slot 不同), 所以直接 DMA from slot 安全. */
+
+void LCD_BeginRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+
+    LCD_SetAddrWindow(x, y, w, h);
+    LCD_CS_LOW();
+    LCD_DC_DATA();
+}
+
+void LCD_EndRect(void) {
+    /* LCD_WritePixelsStream 是同步阻塞, 调用返回时 DMA 已 done + SPI 移位寄存器已空.
+     * 直接 CS_HIGH 即可. 无状态. */
+    LCD_CS_HIGH();
+}
+
+void LCD_AbortStream(void) {
+    /* 跟 LCD_EndRect 一样: 无状态, CS_HIGH 即丢剩余数据. */
+    LCD_CS_HIGH();
+}
+
+void LCD_WritePixelsStream(const uint8_t *buf, uint16_t len) {
+    if (len == 0) return;
+    /* 复用现成的 blocking multi-chunk DMA: 自动分 chunk, 每 chunk 同步等 TC,
+     * 末尾 LCD_DMAStop 等 SPI BSY 清. host 端发的是 BE 字节流, MCU 不 swap. */
+    LCD_DMASend(buf, len);
 }
 
 void LCD_BL_SetBrightness(uint8_t pct) {
