@@ -44,7 +44,7 @@ static void dispatch_control_slot(const uint8_t *slot, uint16_t rx_len) {
     if (rx_len < 1) return;
     uint8_t cmd = slot[0];
 
-    printf("[CMD] 0x%x @%dms\n", cmd, (int)g_ticks_ms);
+    // printf("[CMD] 0x%x @%dms\n", cmd, (int)g_ticks_ms);
     switch (cmd) {
     case CMD_PING:
         /* 心跳: 设备回 PONG */
@@ -105,17 +105,21 @@ void Protocol_Poll(void) {
         dispatch_control_slot(slot, rx_len);
 
         /* 推进 ring buffer */
+        NVIC_DisableIRQ(USBFS_IRQn);
         RingBuffer_Comm.DealPtr++;
         if (RingBuffer_Comm.DealPtr == DEF_Ring_Buffer_Max_Blks) {
             RingBuffer_Comm.DealPtr = 0;
         }
         RingBuffer_Comm.RemainPack--;
+        NVIC_EnableIRQ(USBFS_IRQn);
 
         /* back-pressure: 消费到 restart 阈值下, 重新 ACK EP1 OUT */
         if (RingBuffer_Comm.StopFlag &&
             RingBuffer_Comm.RemainPack < (DEF_Ring_Buffer_Max_Blks - DEF_RING_BUFFER_RESTART)) {
             USBFSD->UEP1_CTRL_H = (USBFSD->UEP1_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_ACK;
+            NVIC_DisableIRQ(USBFS_IRQn);
             RingBuffer_Comm.StopFlag = 0;
+            NVIC_EnableIRQ(USBFS_IRQn);
         }
     }
 }
@@ -132,19 +136,23 @@ void Protocol_PollPixels(void) {
         LCD_WritePixelsStream(slot, rx_len);  /* 同步阻塞 ~25µs */
 
         /* 推进 ring buffer */
+        NVIC_DisableIRQ(USBFS_IRQn);
         RingBuffer_Comm_EP5.DealPtr++;
         if (RingBuffer_Comm_EP5.DealPtr == DEF_Ring_Buffer_Max_Blks) {
             RingBuffer_Comm_EP5.DealPtr = 0;
         }
         RingBuffer_Comm_EP5.RemainPack--;
+        NVIC_EnableIRQ(USBFS_IRQn);
         if (RingBuffer_Comm_EP5.StopFlag) {
             printf("RemainPack=%d\n", RingBuffer_Comm_EP5.RemainPack);
         }
         /* back-pressure: 消费到 restart 阈值下, 重新 ACK EP5 OUT */
         if (RingBuffer_Comm_EP5.StopFlag &&
             RingBuffer_Comm_EP5.RemainPack < (DEF_Ring_Buffer_Max_Blks - DEF_RING_BUFFER_RESTART)) {
-            USBFSD->UEP5_CTRL_H = (USBFSD->UEP5_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_ACK;
+            NVIC_DisableIRQ(USBFS_IRQn);
             RingBuffer_Comm_EP5.StopFlag = 0;
+            NVIC_EnableIRQ(USBFS_IRQn);
+            USBFSD->UEP5_CTRL_H = (USBFSD->UEP5_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_ACK;
         }
     }
 }
