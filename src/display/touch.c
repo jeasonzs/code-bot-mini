@@ -22,6 +22,7 @@
  */
 
 #include "touch.h"
+#include "lcd_driver.h"
 #include "ch32x035_conf.h"
 #include "protocol/proto.h"
 #include <stdio.h>
@@ -204,7 +205,7 @@ void Touch_Init(void) {
     /* 验证 IC 响应 (读 ChipID) */
     uint8_t chip_id = 0;
     if (I2C_ReadRegMulti(TP_I2C_ADDR, CST816D_REG_CHIPID, &chip_id, 1) == 0) {
-        printf("[Touch] CST816D ChipID: 0x%02X\n", chip_id);
+        printf("[Touch] CST816D ChipID: 0x%x\n", chip_id);
         if (chip_id != 0xB6 && chip_id != 0xB5) {
             printf("[Touch] WARNING: unexpected ChipID 0x%02X\n", chip_id);
         }
@@ -220,17 +221,23 @@ void Touch_Init(void) {
     }
 }
 
+/* ===== 触摸状态机 (跨 IRQ 累积 down/move/up) ===== */
+static uint8_t  s_touch_pressed = 0;
+static uint16_t s_touch_last_x  = 0;
+static uint16_t s_touch_last_y  = 0;
+
 /* 上报触摸事件 (转成协议事件类型) */
 static void report_gesture(uint8_t gesture_id) {
     uint8_t proto_event;
     switch (gesture_id) {
-        case CST816D_GESTURE_SLIDE_LEFT:  proto_event = 3; break;
-        case CST816D_GESTURE_SLIDE_RIGHT: proto_event = 4; break;
-        case CST816D_GESTURE_LONG_PRESS:  proto_event = 5; break;
-        case CST816D_GESTURE_DOUBLE_CLICK: proto_event = 6; break;
-        case CST816D_GESTURE_SINGLE_CLICK: proto_event = 0xFF; break;  /* 短按不上报 */
+        case CST816D_GESTURE_SLIDE_UP:   proto_event = TOUCH_EVENT_SWIPE_LEFT;        break;
+        case CST816D_GESTURE_SLIDE_DOWN:  proto_event = TOUCH_EVENT_SWIPE_RIGHT;       break;
+        case CST816D_GESTURE_LONG_PRESS:   proto_event = TOUCH_EVENT_LONG_PRESS;        break;
+        case CST816D_GESTURE_DOUBLE_CLICK: proto_event = TOUCH_EVENT_DOUBLE_CLICK;      break;
+        case CST816D_GESTURE_SINGLE_CLICK: return;  /* 短按: 已经由 DOWN/UP 表达, 不再单独报手势 */
         default: return;
     }
+    printf("gseture:%d\n", proto_event);
     Protocol_SendTouchEvent(proto_event, 0, 0);  /* 手势无坐标 */
 }
 
@@ -245,14 +252,36 @@ void Touch_Poll(void) {
 
     uint8_t gesture = buf[0];      /* 0x01 */
     uint8_t finger  = buf[1];      /* 0x02 */
-    uint16_t x = ((buf[2] & 0x0F) << 8) | buf[3];
-    uint16_t y = ((buf[4] & 0x0F) << 8) | buf[5];
+    /* CST816D 是自容触摸芯片, sensor 两轴 pad 数非对称, X/Y 寄存器范围由物理 pad 数决定:
+     *   sensor X 寄存器 0..319 (沿 LCD Y, 320 pad);
+     *   sensor Y 寄存器 0..171 (沿 LCD X, 172 pad).
+     * 本 panel sensor 相对 LCD 旋转 90° CCW, 所以先交换两轴, 再按屏物理像素线性拉伸
+     * 把 sensor 寄存器值映射到 LCD 像素坐标. */
+    uint16_t tx = ((buf[2] & 0x0F) << 8) | buf[3];   /* sensor X (0..319) */
+    uint16_t ty = ((buf[4] & 0x0F) << 8) | buf[5];   /* sensor Y (0..171) */
+    uint16_t x  = (uint16_t)((uint32_t)ty * LCD_WIDTH  / LCD_HEIGHT);  /* sensor Y → display X (0..319) */
+    uint16_t y  = (uint16_t)((uint32_t)tx * LCD_HEIGHT / LCD_WIDTH);   /* sensor X → display Y (0..171) */
+    
 
-    if (finger == 0) {
-        /* 无触摸 - 报告手势 */
-        report_gesture(gesture);
+    if (finger > 0) {
+        /* 手指按住中: DOWN (首次) / MOVE (坐标变化时) */
+        if (!s_touch_pressed) {
+            Protocol_SendTouchEvent(TOUCH_EVENT_DOWN, x, y);
+            // printf("Down x=%d, y=%d\n", x, y);
+        } else if (x != s_touch_last_x || y != s_touch_last_y) {
+            Protocol_SendTouchEvent(TOUCH_EVENT_MOVE, x, y);
+            // printf("Move x=%d, y=%d\n", x, y);
+        }
+        s_touch_pressed = 1;
+        s_touch_last_x  = x;
+        s_touch_last_y  = y;
     } else {
-        /* 有触摸 - 上报 DOWN 坐标 */
-        Protocol_SendTouchEvent(0, x, y);
+        /* 手指抬起: UP (用最近一次坐标), 之后回报手势 (chip 识别出的) */
+        if (s_touch_pressed) {
+            Protocol_SendTouchEvent(TOUCH_EVENT_UP, s_touch_last_x, s_touch_last_y);
+            s_touch_pressed = 0;
+            // printf("Up x=%d, y=%d\n", x, y);
+        }
     }
+    report_gesture(gesture);
 }

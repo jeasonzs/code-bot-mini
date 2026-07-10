@@ -146,7 +146,9 @@ int main(void) {
     LCD_BL_SetBrightness(80);
     LCD_DebugAlignPattern();
 
-    /* 7. (触摸 CST816D 暂不调试) */
+    /* 7. 触摸 CST816D 初始化 (硬件复位 + I2C1 + EXTI0 on PB0) */
+    printf("[CodeBot] Init Touch CST816D...\n");
+    Touch_Init();
 
     /* 9. USB 复合设备初始化 (Vendor + HID Keyboard) */
     printf("[CodeBot] Init USB composite...\n");
@@ -174,7 +176,7 @@ int main(void) {
         Protocol_PollPixels();
 
         /* 处理触摸事件 (I2C 读 + 上报 host) */
-        // Touch_Poll();
+        Touch_Poll();
 
         /* 发送 HID Keyboard 击键队列 */
         HID_Kbd_SendPending();

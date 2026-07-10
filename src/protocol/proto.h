@@ -46,6 +46,7 @@ typedef enum {
     TOUCH_EVENT_SWIPE_RIGHT       = 4,
     TOUCH_EVENT_LONG_PRESS        = 5,
     TOUCH_EVENT_LONG_PRESS_RELEASE = 6,
+    TOUCH_EVENT_DOUBLE_CLICK      = 7,
 } touch_event_t;
 
 /* ===== EP1 OUT 命令 packed struct ===== */
