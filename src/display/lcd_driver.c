@@ -362,6 +362,8 @@ static void LCD_BL_PWMInit(void) {
     TIM_OC3Init(LCD_BL_TIMER, &TIM_OCInitStructure);
     TIM_OC3PreloadConfig(LCD_BL_TIMER, TIM_OCPreload_Enable);
 
+	TIM_CtrlPWMOutputs(LCD_BL_TIMER, ENABLE );
+	TIM_ARRPreloadConfig( LCD_BL_TIMER, ENABLE );
     TIM_Cmd(LCD_BL_TIMER, ENABLE);
 }
 
@@ -480,8 +482,8 @@ void LCD_WritePixelsStream(const uint8_t *buf, uint16_t len) {
 }
 
 void LCD_BL_SetBrightness(uint8_t pct) {
-    if (pct > 100) pct = 100;
-    /* CCR 范围 0-999, 0%=0, 100%=999 */
+    // if (pct > 100) pct = 100;
+    // /* CCR 范围 0-999, 0%=0, 100%=999 */
     uint16_t ccr = (uint16_t)((uint32_t)pct * 999 / 100);
     TIM_SetCompare3(LCD_BL_TIMER, ccr);
 }

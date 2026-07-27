@@ -143,7 +143,7 @@ int main(void) {
     // /* 6. LCD 初始化 (GC9307) */
     printf("[CodeBot] Init LCD GC9307...\n");
     LCD_Init();
-    LCD_BL_SetBrightness(80);
+    LCD_BL_SetBrightness(50);
     LCD_DebugAlignPattern();
 
     /* 7. 触摸 CST816D 初始化 (硬件复位 + I2C1 + EXTI0 on PB0) */
