@@ -462,6 +462,23 @@ void USBFS_IRQHandler( void )
                                     pUSBFS_Descr = MyCfgDescr;
                                     len = DEF_USBD_CONFIG_DESC_LEN;
                                     break;
+
+                                /* Code Bot: get BOS descriptor (USB 2.1+).
+                                 * 含 MS OS 2.0 Platform Capability,
+                                 * 让 Windows 知道去拉 MS OS 2.0 descriptor set,
+                                 * 自动把 Interface 0 绑到 inbox winusb.sys — 免驱. */
+                                case USB_DESC_TYPE_BOS:
+                                    pUSBFS_Descr = MyBOSDescr;
+                                    len = DEF_USBD_BOS_DESC_LEN;
+                                    break;
+
+                                /* Code Bot: get MS OS 2.0 descriptor set.
+                                 * 触发: bmRequestType=0x80, bRequest=GET_DESCRIPTOR,
+                                 *       wValue=0xEE00. 长度由 set 自己 wTotalLength 报告. */
+                                case USB_DESC_TYPE_MS_OS_20:
+                                    pUSBFS_Descr = MyMSOS20DescrSet;
+                                    len = DEF_USBD_MSOS20_DESC_LEN;
+                                    break;
                               /* get usb report descriptor */
                               case USB_DESCR_TYP_REPORT:
                                     if (USBFS_SetupReqIndex == 0x01)   /* Code Bot: interface 1 */

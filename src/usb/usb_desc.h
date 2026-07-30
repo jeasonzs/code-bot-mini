@@ -1,15 +1,18 @@
 /**
  * @file    usb_desc.h
- * @brief   USB 描述符 - 复合设备 (Vendor + HID Keyboard + CDC ACM)
+ * @brief   USB 描述符 - 复合设备 (Vendor Bulk + HID Keyboard)
  *
- * 设备描述符和配置描述符.
- * 端点分配:
- *   - EP1 OUT (bulk 64B):  Vendor 图像/命令 (主机 → 设备)
- *   - EP2 IN  (bulk 64B):  Vendor 触摸事件/ACK (设备 → 主机)
+ * v0.18 拓扑 (实际编译进固件):
+ *   - EP1 OUT (bulk 64B):  Vendor 控制通道 (主机 → 设备)
+ *   - EP2 IN  (bulk 64B):  Vendor 响应 (设备 → 主机, PONG/TOUCH/LOG)
  *   - EP3 IN  (intr 8B):   HID Keyboard report
- *   - EP4 OUT (bulk 64B):  CDC data OUT (主机 → 设备, 命令)
- *   - EP5 IN  (bulk 64B):  CDC data IN  (设备 → 主机, printf)
- *   - EP6 IN  (intr 8B):   CDC notification (DTR/DSR)
+ *   - EP5 OUT (bulk 64B):  Vendor 图像数据流 (SPI DMA 直通 LCD)
+ *
+ * Windows 免驱:
+ *   BOS Descriptor 声明 MS OS 2.0 Platform Capability.
+ *   MS OS 2.0 Descriptor Set 把 Interface 0 标记为 WinUSB 兼容,
+ *   让 Windows 把 Interface 0 自动绑到 inbox winusb.sys (零安装).
+ *   Interface 1 (HID Keyboard) 不受影响, 走标准 HID 键盘栈.
  */
 
 #ifndef USB_DESC_H
@@ -24,6 +27,9 @@
 #define USB_DESC_TYPE_INTERFACE                 0x04
 #define USB_DESC_TYPE_ENDPOINT                  0x05
 #define USB_DESC_TYPE_IAD                       0x0B
+#define USB_DESC_TYPE_BOS                       0x0F   /* USB 2.1+ */
+#define USB_DESC_TYPE_DEVICE_CAPABILITY         0x10
+#define USB_DESC_TYPE_MS_OS_20                  0xEE   /* wValue high byte for GET_DESCRIPTOR */
 #define USB_DESC_TYPE_HID                       0x21
 #define USB_DESC_TYPE_REPORT                    0x22
 #define USB_DESC_TYPE_CS_INTERFACE              0x24
@@ -76,6 +82,8 @@
 #define DEF_USBD_MANU_DESC_LEN     ((uint8_t)MyManuInfo[0])
 #define DEF_USBD_PROD_DESC_LEN     ((uint8_t)MyProdInfo[0])
 #define DEF_USBD_SN_DESC_LEN       ((uint8_t)MySerNumInfo[0])
+#define DEF_USBD_BOS_DESC_LEN      ((uint16_t)MyBOSDescr[2] | ((uint16_t)MyBOSDescr[3] << 8))
+#define DEF_USBD_MSOS20_DESC_LEN   ((uint16_t)MyMSOS20DescrSet[8] | ((uint16_t)MyMSOS20DescrSet[9] << 8))
 
 /* 描述符数组 extern 声明 (定义在 usb_desc.c) */
 extern const uint8_t MyDevDescr[];
@@ -85,5 +93,7 @@ extern const uint8_t MyManuInfo[];
 extern const uint8_t MyProdInfo[];
 extern const uint8_t MySerNumInfo[];
 extern const uint8_t MyHIDReportDesc[];
+extern const uint8_t MyBOSDescr[];
+extern const uint8_t MyMSOS20DescrSet[];
 
 #endif /* USB_DESC_H */
