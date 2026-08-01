@@ -24,6 +24,11 @@
 /* ===== 设备状态 ===== */
 static uint32_t g_status = 0x01;  /* bit 0: ready */
 
+/* 最近一次收到 host→device PING (CMD_PING) 的时刻 (g_ticks_ms 单位).
+ * main.c 据此判断 host 是否还活着, >2.4s 没收到则进入 standby 画面.
+ * 0 表示"从未收到" (开机或刚拔线). */
+static volatile uint32_t g_last_ping_ms = 0;
+
 extern volatile uint32_t g_ticks_ms;  /* TIM3 1ms 滴答, main.c 定义 */
 
 /* ============================================================== */
@@ -47,7 +52,8 @@ static void dispatch_control_slot(const uint8_t *slot, uint16_t rx_len) {
     // printf("[CMD] 0x%x @%dms\n", cmd, (int)g_ticks_ms);
     switch (cmd) {
     case CMD_PING:
-        /* 心跳: 设备回 PONG */
+        /* 心跳: 先更新时间戳 (main.c 检测 >600ms 进 standby), 再回 PONG */
+        g_last_ping_ms = g_ticks_ms;
         proto_send(CMD_PONG, NULL, 0);
         break;
 
@@ -187,4 +193,15 @@ void Protocol_SendLog(const char *fmt, ...) {
         if (len > (int)sizeof(buf)) len = (int)sizeof(buf);
         proto_send(CMD_LOG, buf, (uint16_t)len);
     }
+}
+
+uint32_t Protocol_LastPingMs(void) {
+    return g_last_ping_ms;
+}
+
+bool Protocol_PingStale(uint32_t now_ms, uint32_t timeout_ms) {
+    /* g_last_ping_ms == 0 表示"从未收到"; 视为超时, 让开机直接进 standby.
+     * 否则用 uint32 差值 (g_ticks_ms 单调累加, wrap 后差值仍然正确). */
+    if (g_last_ping_ms == 0) return true;
+    return (now_ms - g_last_ping_ms) > timeout_ms;
 }

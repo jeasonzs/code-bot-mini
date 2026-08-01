@@ -18,6 +18,7 @@
 
 /* 各模块头文件 (后续模块化实现) */
 #include "display/lcd_driver.h"
+#include "display/fonts/code_bot.h"
 #include "display/touch.h"
 #include "protocol/proto.h"
 #include "usb/usb_desc.h"
@@ -122,6 +123,37 @@ void blink() {
         delay(500);
     }
 }
+
+/* ============================================================== */
+/* 待机画面: 黑底 + 蓝色大字 "Codebot"                              */
+/*   位图 src/display/fonts/code_bot.h (60pt bold 取模).             */
+/*   开机调用一次; host 心跳停止 >600ms 时再调用一次.                */
+/*   走 LCD_BeginRect/WritePixelsStream/EndRect 流式 API,           */
+/*   避免缓存整张 RGB565 (~30KB) 超 RAM 上限.                      */
+/* ============================================================== */
+static uint8_t s_standby_line_be[LCD_WIDTH * 2];  /* 640B BSS, RGB565 BE */
+
+static void standby_expand_row(const uint8_t *bits, uint16_t width, uint8_t *out) {
+    for (uint16_t x = 0; x < width; x++) {
+        uint8_t b = (bits[x >> 3] >> (7 - (x & 7))) & 1;
+        uint16_t px = b ? LCD_COLOR_THEME_FG : LCD_COLOR_BLACK;
+        out[x * 2]     = (uint8_t)(px >> 8);  /* 高字节先 (BE), 匹配 SPI 期望 */
+        out[x * 2 + 1] = (uint8_t)(px & 0xFF);
+    }
+}
+
+static void LCD_DrawCodebotStandby(void) {
+    LCD_Clear(LCD_COLOR_BLACK);
+    LCD_BeginRect(CODEBOT_LOGO_X, CODEBOT_LOGO_Y,
+                  CODEBOT_LOGO_W, CODEBOT_LOGO_H);
+    for (uint16_t row = 0; row < CODEBOT_LOGO_H; row++) {
+        standby_expand_row(&codebot_logo_bits[row][0],
+                           CODEBOT_LOGO_W, s_standby_line_be);
+        LCD_WritePixelsStream(s_standby_line_be, CODEBOT_LOGO_W * 2);
+    }
+    LCD_EndRect();
+}
+
 int main(void) {
     /* 1. 系统基础初始化 (在 system_ch32x035.c 中, 默认 48MHz HSI) */
     SystemInit();
@@ -144,7 +176,7 @@ int main(void) {
     printf("[CodeBot] Init LCD GC9307...\n");
     LCD_Init();
     LCD_BL_SetBrightness(50);
-    LCD_DebugAlignPattern();
+    LCD_DrawCodebotStandby();  /* 开机默认 Logo (取代 LCD_DebugAlignPattern, 后者保留做调试) */
 
     /* 7. 触摸 CST816D 初始化 (硬件复位 + I2C1 + EXTI0 on PB0) */
     printf("[CodeBot] Init Touch CST816D...\n");
@@ -167,8 +199,19 @@ int main(void) {
     /* 主循环                                                       */
     /* ============================================================ */
     uint32_t last_ping = 0;
+    bool standby_active = false;  /* standby 状态机: 一次性画 Logo, host 恢复后让位 */
 
     while (1) {
+        /* standby 检测: >2.4s 没收到 host PING → 一次性刷 Logo, host 恢复让位 */
+        if (Protocol_PingStale(g_ticks_ms, 2400)) {
+            if (!standby_active) {
+                LCD_DrawCodebotStandby();
+                standby_active = true;
+            }
+        } else {
+            standby_active = false;
+        }
+
         /* 处理 USB 事件 (EP1 OUT 控制命令解析) */
         Protocol_Poll();
 

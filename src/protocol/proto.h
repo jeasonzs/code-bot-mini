@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 /* ===== 命令 ID (EP1 OUT 主机→设备) ===== */
 typedef enum {
@@ -102,5 +103,12 @@ void Protocol_SendTouchEvent(uint8_t event_type, uint16_t x, uint16_t y);
 
 /* 主动发送日志 (设备 → 主机) */
 void Protocol_SendLog(const char *fmt, ...);
+
+/* 最近一次收到 host→device PING 的 g_ticks_ms (0 = 从未收到). */
+uint32_t Protocol_LastPingMs(void);
+
+/* true = last_ping 距 now 超过 timeout_ms (或从未收到).
+ * main.c 据此决定是否进 standby. */
+bool Protocol_PingStale(uint32_t now_ms, uint32_t timeout_ms);
 
 #endif /* PROTO_H */

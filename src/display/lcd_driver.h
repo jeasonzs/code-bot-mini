@@ -39,6 +39,10 @@ typedef uint16_t lcd_color_t;
 #define LCD_COLOR_CYAN       0x07FF
 #define LCD_COLOR_MAGENTA    0xF81F
 
+/* Service 主题色 (code-bot-service/src/codebot/render/theme.py: VSCodeDark).
+ * 设备侧 standby 等独立画面复用, 不再自己挑色. */
+#define LCD_COLOR_THEME_FG   0x8E9F  /* VSCodeDark.INFO    = #8CD2FA */
+
 /* 初始化 (时钟 + SPI + GC9307 init sequence) */
 void LCD_Init(void);
 
