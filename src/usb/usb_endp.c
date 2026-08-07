@@ -11,6 +11,9 @@
  * v0.17 → v0.18 重写:
  *   - 删 EP1_OUT_Callback byte-bounce 循环 (改用 main loop 直接消费 ring buffer)
  *   - Vendor_SendFrame 保持现状, 简化后只发 cmd + struct (无 8B header)
+ *
+ * v0.18+: EP2 IN 入队 (RingBuffer_Comm_EP2_IN), EP2_IN_TryDrain 出队, 见 .h.
+ *        EP2_IN_Callback 钩子留空 (库直接 drain).
  */
 
 #include "usb_endp.h"
@@ -32,30 +35,42 @@ uint8_t EP3_Tx_Buf[8]   __attribute__((aligned(4)));   /* HID interrupt IN, 8B  
  * 保留兼容空符号, 防止旧 include 引用. */
 uint8_t EP1_Rx_Buf[64]  __attribute__((aligned(4)));
 
-/* ============================================================== */
-/* Vendor Bulk IN (EP2) 发送完成回调                                */
-/* 库 EP2_IN 分支已清 busy + 翻 T_TOG                              */
-/* ============================================================== */
+/* Vendor Bulk IN (EP2) 发送完成回调 — 已不再调用, 见 .h. */
 void EP2_IN_Callback(void) {
-    /* 库自动处理. 钩子留给将来扩展. */
+    /* 空壳, 防旧 include 引用 */
 }
 
-/* ============================================================== */
-/* HID Keyboard EP3 发送完成回调                                   */
-/* ============================================================== */
+/* HID Keyboard EP3 发送完成回调 */
 void EP3_IN_Callback(void) {
-    /* 同 EP2_IN_Callback. */
 }
 
-/* ============================================================== */
-/* Vendor 帧发送 (EP2 IN)                                          */
-/* v0.18: 不再包装 8B header, 直接发 cmd + struct (≤ 64B 整包)    */
-/* ============================================================== */
+/* Vendor 帧发送 (EP2 IN) — v0.18: 不再包装 8B header, 直接发 cmd + struct (≤ 64B 整包)
+ * v0.18+: 入队 RingBuffer_Comm_EP2_IN, 空→非空时 kickstart. */
 int Vendor_SendFrame(const uint8_t *data, uint16_t len) {
     if (len == 0 || len > 64) return -1;
     if (data == NULL) return -1;
-    if (USBFS_Endp_Busy[DEF_UEP2]) return -1;        /* 上一帧没发完, 丢 */
-    return USBFS_Endp_DataUp(DEF_UEP2, data, len);
+
+    NVIC_DisableIRQ(USBFS_IRQn);
+
+    uint8_t was_empty = (RingBuffer_Comm_EP2_IN.LoadPtr == RingBuffer_Comm_EP2_IN.DealPtr);
+    uint8_t next_load = (RingBuffer_Comm_EP2_IN.LoadPtr + 1) % DEF_Ring_Buffer_Max_Blks;
+    if (next_load == RingBuffer_Comm_EP2_IN.DealPtr) {
+        NVIC_EnableIRQ(USBFS_IRQn);
+        return -1;
+    }
+    /* memcpy 是必须的: 调用方栈 frame 返回后就消失, 数据要活到 drain */
+    memcpy(&Data_Buffer_EP2[RingBuffer_Comm_EP2_IN.LoadPtr * DEF_USBD_FS_PACK_SIZE],
+           data, len);
+    RingBuffer_Comm_EP2_IN.PackLen[RingBuffer_Comm_EP2_IN.LoadPtr] = (uint8_t)len;
+    RingBuffer_Comm_EP2_IN.LoadPtr = next_load;
+    RingBuffer_Comm_EP2_IN.RemainPack++;
+
+    if (was_empty) {
+        EP2_IN_TryDrain();
+    }
+
+    NVIC_EnableIRQ(USBFS_IRQn);
+    return 0;
 }
 
 /* ============================================================== */

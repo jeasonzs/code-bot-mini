@@ -101,7 +101,6 @@ extern volatile uint8_t  USBFS_DevEnumStatus;
 
 /* Endpoint Buffer */
 extern __attribute__ ((aligned(4))) uint8_t USBFS_EP0_Buf[];
-extern __attribute__ ((aligned(4))) uint8_t USBFS_EP2_Buf[];
 extern __attribute__ ((aligned(4))) uint8_t USBFS_EP3_Buf[];   /* Code Bot: EP3 HID IN */
 
 
@@ -116,6 +115,13 @@ extern __attribute__ ((aligned(4))) uint8_t  Data_Buffer[ ];
  * 16 槽 64B = 1KB (跟 EP1 一样), main loop 消费. */
 extern RING_BUFF_COMM  RingBuffer_Comm_EP5;
 extern __attribute__ ((aligned(4))) uint8_t  Data_Buffer5[ ];
+
+/* EP2 IN send queue (mirror EP1/EP5 OUT reversed). */
+extern RING_BUFF_COMM  RingBuffer_Comm_EP2_IN;
+extern __attribute__ ((aligned(4))) uint8_t  Data_Buffer_EP2[ ];
+
+/* Pop one frame from EP2 IN queue, arm next IN. */
+void EP2_IN_TryDrain(void);
 
 /******************************************************************************/
 /* external functions */

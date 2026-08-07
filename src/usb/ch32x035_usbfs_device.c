@@ -47,7 +47,6 @@ volatile uint8_t USBFS_HidProtocol;
 
 /* Endpoint Buffer */
 __attribute__ ((aligned(4))) uint8_t USBFS_EP0_Buf[DEF_USBD_UEP0_SIZE];
-__attribute__ ((aligned(4))) uint8_t USBFS_EP2_Buf[DEF_USB_EP2_FS_SIZE];
 __attribute__ ((aligned(4))) uint8_t USBFS_EP3_Buf[DEF_USB_EP3_FS_SIZE];   /* Code Bot: EP3 HID IN */
 
 /* Code Bot v0.18: EP5 OUT image data ring buffer (跟 EP1 同构, 16 槽 × 64B = 1KB)
@@ -55,6 +54,10 @@ __attribute__ ((aligned(4))) uint8_t USBFS_EP3_Buf[DEF_USB_EP3_FS_SIZE];   /* Co
  *     EP0/UEP0_DMA+64), 不能用作 bulk 数据端点. EP5 有 UEP5_DMA, 独立 buffer. */
 __attribute__ ((aligned(4))) uint8_t Data_Buffer5[DEF_RING_BUFFER_SIZE];
 RING_BUFF_COMM RingBuffer_Comm_EP5;
+
+/* EP2 IN send queue (mirror EP1/EP5 OUT reversed; LoadPtr = producer, DealPtr = consumer). */
+__attribute__ ((aligned(4))) uint8_t Data_Buffer_EP2[DEF_RING_BUFFER_SIZE];
+RING_BUFF_COMM RingBuffer_Comm_EP2_IN;
 
 /* USB IN Endpoint Busy Flag */
 volatile uint8_t  USBFS_Endp_Busy[ DEF_UEP_NUM ];
@@ -100,7 +103,7 @@ void USBFS_Device_Endp_Init( void )
 
     USBFSD->UEP0_DMA = (uint32_t)USBFS_EP0_Buf;
     USBFSD->UEP1_DMA = (uint32_t)Data_Buffer;
-    USBFSD->UEP2_DMA = (uint32_t)USBFS_EP2_Buf;
+    USBFSD->UEP2_DMA = (uint32_t)Data_Buffer_EP2;   /* default slot 0; ISR / kickstart re-point per frame */
     USBFSD->UEP3_DMA = (uint32_t)USBFS_EP3_Buf;   /* Code Bot */
     USBFSD->UEP5_DMA = (uint32_t)Data_Buffer5;   /* Code Bot v0.18: EP5 OUT image data, slot 0 */
 
@@ -118,6 +121,15 @@ void USBFS_Device_Endp_Init( void )
     RingBuffer_Comm_EP5.StopFlag = 0;
     for (uint8_t i = 0; i < DEF_Ring_Buffer_Max_Blks; i++) {
         RingBuffer_Comm_EP5.PackLen[i] = 0;
+    }
+
+    /* 清 EP2 IN ring buffer */
+    RingBuffer_Comm_EP2_IN.LoadPtr = 0;
+    RingBuffer_Comm_EP2_IN.DealPtr = 0;
+    RingBuffer_Comm_EP2_IN.RemainPack = 0;
+    RingBuffer_Comm_EP2_IN.StopFlag = 0;
+    for (uint8_t i = 0; i < DEF_Ring_Buffer_Max_Blks; i++) {
+        RingBuffer_Comm_EP2_IN.PackLen[i] = 0;
     }
 
     /* Clear End-points Busy Status */
@@ -258,6 +270,8 @@ void USBFS_IRQHandler( void )
                                     printf("[DBG] EP2_IN done, count=%d\n", (int)_ep2_done);
                                 }
                             }
+                            EP2_IN_TryDrain();
+                            break;
                             break;
 
                         /* Code Bot: end-point 3 data in interrupt (HID Keyboard report) */
@@ -890,6 +904,24 @@ uint8_t USBFS_Endp_DataUp(uint8_t endp, const uint8_t *pbuf, uint16_t len)
     *uep_ctrl = (*uep_ctrl & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_RES_ACK;
     USBFS_Endp_Busy[endp] = 1;
     return 0;
+}
+
+
+/* Pop one frame from EP2 IN queue, re-point UEP2_DMA at slot, arm next IN.
+ * No-op if queue empty or EP2 already busy.
+ * Called by EP2 IN ISR (chain) and Vendor_SendFrame (empty→non-empty kickstart). */
+void EP2_IN_TryDrain(void) {
+    if (RingBuffer_Comm_EP2_IN.LoadPtr == RingBuffer_Comm_EP2_IN.DealPtr) return;
+    if (USBFS_Endp_Busy[DEF_UEP2]) return;
+
+    uint8_t slot = RingBuffer_Comm_EP2_IN.DealPtr;
+    uint8_t len  = RingBuffer_Comm_EP2_IN.PackLen[slot];
+    USBFSD->UEP2_DMA = (uint32_t)(&Data_Buffer_EP2[slot * DEF_USBD_FS_PACK_SIZE]);
+    USBFSD->UEP2_TX_LEN = len;
+    USBFSD->UEP2_CTRL_H = (USBFSD->UEP2_CTRL_H & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_RES_ACK;
+    USBFS_Endp_Busy[DEF_UEP2] = 1;
+    RingBuffer_Comm_EP2_IN.DealPtr = (slot + 1) % DEF_Ring_Buffer_Max_Blks;
+    RingBuffer_Comm_EP2_IN.RemainPack--;
 }
 
 
