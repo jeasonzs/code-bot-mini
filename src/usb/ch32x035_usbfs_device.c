@@ -262,16 +262,7 @@ void USBFS_IRQHandler( void )
                             USBFSD->UEP2_CTRL_H = (USBFSD->UEP2_CTRL_H & ~USBFS_UEP_T_RES_MASK) | USBFS_UEP_T_RES_NAK;
                             USBFSD->UEP2_CTRL_H ^= USBFS_UEP_T_TOG;
                             USBFS_Endp_Busy[ DEF_UEP2 ] = 0;
-                            /* [DBG] 打印一下 IN token 完成 (节流, 不然刷屏炸 ISR) */
-                            {
-                                static uint16_t _ep2_done = 0;
-                                _ep2_done++;
-                                if ((_ep2_done & 0x3F) == 0) {
-                                    printf("[DBG] EP2_IN done, count=%d\n", (int)_ep2_done);
-                                }
-                            }
                             EP2_IN_TryDrain();
-                            break;
                             break;
 
                         /* Code Bot: end-point 3 data in interrupt (HID Keyboard report) */
