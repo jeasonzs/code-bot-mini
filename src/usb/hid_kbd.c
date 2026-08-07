@@ -36,7 +36,7 @@ void HID_Kbd_EnqueueReports(const uint8_t *reports, uint8_t count, uint8_t delay
 
 void HID_Kbd_SendPending(void) {
     /* 节流: 20ms 发送一个 report (USB polling 间隔 1ms, 但 HID 击键要慢一点更像真人) */
-    extern volatile uint32_t g_ticks_ms;
+    extern volatile uint64_t g_ticks_ms;
     if (g_ticks_ms - s_last_send_tick < 20) return;
     s_last_send_tick = g_ticks_ms;
 

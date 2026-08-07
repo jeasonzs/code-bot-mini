@@ -89,7 +89,7 @@
 #include "ch32x035.h"
 
 /* ===== 全局工具 (在 main.c 中定义) ===== */
-extern volatile uint32_t g_ticks_ms;
+extern volatile uint64_t g_ticks_ms;
 void delay_ms(uint32_t ms);
 
 /* ===== GPIO 端口基地址 (CH32X035 头文件已定义 GPIOA/GPIOB/GPIOC) ===== */

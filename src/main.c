@@ -26,6 +26,8 @@
 #include "usb/hid_kbd.h"
 #include "util/ringbuf.h"
 
+#define BACKLIGHT_WAKEUP_TIME_MS 2000.0f
+
 /* 延时函数声明 (本文件定义, 其他模块使用) */
 void delay_ms(uint32_t ms);
 
@@ -34,7 +36,7 @@ void delay_ms(uint32_t ms);
 /* ============================================================== */
 /* g_ticks_ms 由 TIM3 update 中断每 1ms 累加一次 (见 ch32x035_it.c).
  * SysTick 留给 debug.c 的 Delay_Ms / Delay_Us 用, 不要在这里占用. */
-volatile uint32_t g_ticks_ms = 0;
+volatile uint64_t g_ticks_ms = 0;
 
 /* TIM3 1ms 滴答初始化
  *   48MHz / (47+1) = 1MHz 计数时钟, 周期 999 → 1kHz update 中断 = 1ms 滴答
@@ -175,8 +177,7 @@ int main(void) {
     // /* 6. LCD 初始化 (GC9307) */
     printf("[CodeBot] Init LCD GC9307...\n");
     LCD_Init();
-    LCD_BL_SetBrightness(50);
-    LCD_DrawCodebotStandby();  /* 开机默认 Logo (取代 LCD_DebugAlignPattern, 后者保留做调试) */
+    LCD_BL_SetBrightness(0);
 
     /* 7. 触摸 CST816D 初始化 (硬件复位 + I2C1 + EXTI0 on PB0) */
     printf("[CodeBot] Init Touch CST816D...\n");
@@ -199,9 +200,17 @@ int main(void) {
     /* 主循环                                                       */
     /* ============================================================ */
     uint32_t last_ping = 0;
-    bool standby_active = false;  /* standby 状态机: 一次性画 Logo, host 恢复后让位 */
+    uint8_t last_b = 0;
+    bool standby_active = false;  /* standby 状态机: 一次性画 Logo, host 恢复让位 */
 
     while (1) {
+        if (g_ticks_ms <= BACKLIGHT_WAKEUP_TIME_MS) {
+            uint8_t b = g_ticks_ms / BACKLIGHT_WAKEUP_TIME_MS * 80;
+            if (b != last_b) {
+                LCD_BL_SetBrightness(b);
+                last_b = b;
+            }
+        }
         /* standby 检测: >2.4s 没收到 host PING → 一次性刷 Logo, host 恢复让位 */
         if (Protocol_PingStale(g_ticks_ms, 2400)) {
             if (!standby_active) {

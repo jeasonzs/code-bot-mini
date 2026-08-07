@@ -29,7 +29,7 @@ static uint32_t g_status = 0x01;  /* bit 0: ready */
  * 0 表示"从未收到" (开机或刚拔线). */
 static volatile uint32_t g_last_ping_ms = 0;
 
-extern volatile uint32_t g_ticks_ms;  /* TIM3 1ms 滴答, main.c 定义 */
+extern volatile uint64_t g_ticks_ms;  /* TIM3 1ms 滴答, main.c 定义 */
 
 /* ============================================================== */
 /* 内部: 通过 EP2 IN 发送 cmd + struct                              */
