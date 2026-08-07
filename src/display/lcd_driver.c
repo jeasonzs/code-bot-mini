@@ -265,37 +265,37 @@ static void LCD_RunInitSequence(void) {
     LCD_WriteData(0x4B);
 
     /* 伽马 (F0/F2 正极性, F1/F3 负极性) */
-    LCD_WriteCommand(0xF0);
-    LCD_WriteData(0x06);
-    LCD_WriteData(0x08);
-    LCD_WriteData(0x08);
-    LCD_WriteData(0x06);
-    LCD_WriteData(0x05);
-    LCD_WriteData(0x1D);
+    // LCD_WriteCommand(0xF0);
+    // LCD_WriteData(0x06);
+    // LCD_WriteData(0x08);
+    // LCD_WriteData(0x08);
+    // LCD_WriteData(0x06);
+    // LCD_WriteData(0x05);
+    // LCD_WriteData(0x1D);
 
-    LCD_WriteCommand(0xF2);
-    LCD_WriteData(0x00);
-    LCD_WriteData(0x01);
-    LCD_WriteData(0x09);
-    LCD_WriteData(0x07);
-    LCD_WriteData(0x04);
-    LCD_WriteData(0x23);
+    // LCD_WriteCommand(0xF2);
+    // LCD_WriteData(0x00);
+    // LCD_WriteData(0x01);
+    // LCD_WriteData(0x09);
+    // LCD_WriteData(0x07);
+    // LCD_WriteData(0x04);
+    // LCD_WriteData(0x23);
 
-    LCD_WriteCommand(0xF1);
-    LCD_WriteData(0x3B);
-    LCD_WriteData(0x68);
-    LCD_WriteData(0x66);
-    LCD_WriteData(0x36);
-    LCD_WriteData(0x35);
-    LCD_WriteData(0x2F);
+    // LCD_WriteCommand(0xF1);
+    // LCD_WriteData(0x3B);
+    // LCD_WriteData(0x68);
+    // LCD_WriteData(0x66);
+    // LCD_WriteData(0x36);
+    // LCD_WriteData(0x35);
+    // LCD_WriteData(0x2F);
 
-    LCD_WriteCommand(0xF3);
-    LCD_WriteData(0x37);
-    LCD_WriteData(0x6A);
-    LCD_WriteData(0x66);
-    LCD_WriteData(0x37);
-    LCD_WriteData(0x35);
-    LCD_WriteData(0x35);
+    // LCD_WriteCommand(0xF3);
+    // LCD_WriteData(0x37);
+    // LCD_WriteData(0x6A);
+    // LCD_WriteData(0x66);
+    // LCD_WriteData(0x37);
+    // LCD_WriteData(0x35);
+    // LCD_WriteData(0x35);
 
     LCD_WriteCommand(0xFA);
     LCD_WriteData(0x80);
